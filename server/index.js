@@ -16,6 +16,7 @@ dotenv.config({ path: path.join(root, '.env.local') });
 dotenv.config();
 
 const port = Number(process.env.PORT || process.env.API_PORT || 8787);
+if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be a valid TCP port.');
 const authSecret = process.env.AUTH_SECRET || '';
 const driveFileId = process.env.GOOGLE_DRIVE_FILE_ID || '';
 const driveKeyFile = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE || '';
@@ -35,6 +36,19 @@ const repository = drive
   ? new GoogleDriveExcelRepository(workbookPath, { drive, fileId: driveFileId })
   : new ExcelTreasuryRepository(workbookPath);
 const ownerLoginAttempts = new Map();
+const allowedOrigins = new Set((process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || 'http://localhost:5173,http://127.0.0.1:5173,https://ssn-community-finance.pages.dev')
+  .split(',').map((origin) => origin.trim()).filter(Boolean));
+
+function applyCors(request, response) {
+  const origin = String(request.headers.origin || '').trim();
+  if (allowedOrigins.has(origin)) {
+    response.setHeader('Access-Control-Allow-Origin', origin);
+    response.setHeader('Vary', 'Origin');
+  }
+  response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+}
+
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_ATTEMPT_LIMIT = 8;
 
@@ -217,7 +231,7 @@ async function serveExpenseAttachment(request, response) {
 }
 
 async function api(request, response) {
-  if (request.method === 'GET' && request.url === '/api/health') {
+  if (request.method === 'GET' && (request.url === '/api/health' || request.url === '/health')) {
     return sendJson(response, 200, { ok: true, storage: driveFileId ? 'google-drive' : 'excel', workbook: driveFileId ? 'Google Drive: ssn_treasury.xlsx' : path.basename(workbookPath) });
   }
   if (request.method !== 'POST' || request.url !== '/api') {
@@ -400,6 +414,13 @@ await repository.initialize();
 const adminAccount = (await repository.read()).owners.find((owner) => owner.role === 'Admin');
 if (!adminAccount) console.warn('No Admin account exists. Add a row with Role=Admin to Owner Details.');
 const server = http.createServer((request, response) => {
+  applyCors(request, response);
+  if (request.method === 'OPTIONS') {
+    const originAllowed = allowedOrigins.has(String(request.headers.origin || '').trim());
+    response.writeHead(originAllowed ? 204 : 403);
+    response.end();
+    return;
+  }
   if (request.url === '/api/auth/signin') return signIn(request, response);
   if (request.url === '/api/auth/forgot-password') return forgotPassword(request, response);
   if (request.url === '/api/auth/session') return authSession(request, response);
