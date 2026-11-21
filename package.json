@@ -11,6 +11,7 @@
     "start": "node app.js",
     "server": "node app.js",
     "startup-check": "node server/startup-check.js",
+    "drive-preflight": "node server/drive-preflight.js",
     "workbook:init": "node server/initWorkbook.js",
     "seed:test-data": "node server/seedTestData.js"
   },
