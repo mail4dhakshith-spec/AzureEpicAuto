@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "ssn-community-financial-514416",
+  "private_key_id": "92a60dcd0e5d35d2f8fd0787d556e30a114ab826",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC+hBmT+dj0U+O9\nh15LjB1aGFzcDgLWPPEKNZgxqDiJhAVMfxV5el+lhGwcPYcJ6fOTN+asaL8haSsI\nGWgFJc6pAOMK6diE19kVV9iTVPOxtnR8kaXUfKrjaiS0nnsADXoys2KogYsCaFi/\n6WAdjvB/Frm5edVazFHKRI970V1JHTjhb2N1hmc/5o3WaRY6/WYOpxlIriDu6r3A\nzUe3I/seSkjtXKMiWUq21j8mFJhLqRaOvYfRKcHypvcoWEoMGIT79KF18LviR2h8\nFP5WPdpoIn5qY8NjhPJL780oTbeIKjZg+OuIHslLg1/mCSeeeh4LehTKMW1KzzJw\nVw0ximj7AgMBAAECggEAC1NfEeTweNXj3AiIGoWh2RFJs+tBT+sfiTPWcF1HvyUS\nC5IifK5BsV1F8AfYV0aJLF9OX0F620mdPUYFYQj2WCWtWaC9Nmh+hz5JqbiLJC1s\nj1s5OICQyCQvOm2RcldaxFjVrJ7G3MXHQOFmzVsKAQQg1l3fyR4MXrHktb+khAwW\nKwSACta/38HPZz5LbFCKQZHEP7WFNQ++WrWoOewXtW6Huflmf65AueWXrBamBk1P\nkTcGFFwmLoB3pJvvvU0QTa5QLKZ8oYKaFQlMp12ZjB7nwPBk2qvH/wP7KaTj976Q\nOlZDK9dPd8puPrkjwV6d3OnzoicJVWQOR/0nTz18AQKBgQD9qL3nh9shH7cPY9WX\neW2ZQ3ELQxpvjQ+0/Pir7OpiL8YCjPbIJ3CtHxBxnHRRb0wS3IfFFajG9VsZbLkU\nGAnWDB/IhQ5ojPQ7gyQUBnAtCBYzrSKk1VEPXBr1ie5VwAVlwBpSav7MjPybxw1d\nS+Vh74TJ+FFdSgkbt65JMi43QQKBgQDARi9xdV7ft/4i6Yc6xghFjwVPohwLGgoe\nropL6ohXH4T8v/7LI5k2jV6rQj7jtcU8kKjtnWTz+0hO8YfLr+4/1zdJw8PArBxF\nLUkdyI8QFmzCmgZjvf8k/LY13oAhWIk4IC4jOd+jcJpYSI08wNC2GEpqFxaAuwgU\n4OjxcR1tOwKBgQCl7ldj+Nwgm/WNLLqRXw6R3qs5Ock2RamLtJwbI1zjo+q8yme4\n4Qv1Q8fm+fihONQj1n0+MH/6vo+8XwHnIh51FfNIobmeLO6ra4sTSm7hFlQns89g\n0mY3TQIZswPktjsRp4vQdEt/lY69fIXCjR5dZWiREk5vXzn8Frj9CsVuwQKBgCVb\n/c/v3FVf7NNfyNTUsbrCRWfpucU2dAzuIRULJx62kyKBM8LI0fZVlbV1E78vDHnu\nKcSxtnHpu20LZTVgo8xnxuhgT2LajkuqtvBAjfu0P8G4J9GtkyveppDlAMR57X+o\nUQ6rKhcZxAOvZTIOzP70zVC717V/odxcryZqsisNAoGANtjDTPP1Mg2iE7xcF3lQ\noGGe7gAz6kCKYQyGGhoM4TIqa9Sdh/gQ+32C3/LW8ZmmZFSnH5tpKJn8DkPYWskR\nuPkyZ6nItg+TSx/KcNi7woKUrvBFJK+00BqQmUbBd7F4nIuYVABzFfljsPtvk6uz\nZ51K+KpAHsomSvUDEnr2i5Y=\n-----END PRIVATE KEY-----\n",
+  "client_email": "ssn-community-financial-servic@ssn-community-financial-514416.iam.gserviceaccount.com",
+  "client_id": "105003706455250382268",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/ssn-community-financial-servic%40ssn-community-financial-514416.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

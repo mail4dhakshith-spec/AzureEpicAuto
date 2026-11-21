@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env.local
+.env.*.local
+.env.production
+data/*.xlsx
+data/*.bak
+data/*.tmp.xlsx
+data/payment-evidence/
+data/expense-attachments/
