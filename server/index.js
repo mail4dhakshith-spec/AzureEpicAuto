@@ -28,6 +28,9 @@ const evidenceDirectory = path.join(path.dirname(path.resolve(workbookPath)), 'p
 const expenseAttachmentDirectory = path.join(path.dirname(path.resolve(workbookPath)), 'expense-attachments');
 const incomeAttachmentDirectory = path.join(path.dirname(path.resolve(workbookPath)), 'income-attachments');
 const distPath = path.join(root, 'dist');
+if (process.env.NODE_ENV === 'production' && (!driveFileId || (!driveKeyFile && !driveKeyJson))) {
+  throw new Error('Production requires GOOGLE_DRIVE_FILE_ID and GOOGLE_SERVICE_ACCOUNT_KEY_JSON or GOOGLE_SERVICE_ACCOUNT_KEY_FILE.');
+}
 if (Boolean(driveFileId) !== Boolean(driveKeyFile || driveKeyJson)) throw new Error('Set GOOGLE_DRIVE_FILE_ID and GOOGLE_SERVICE_ACCOUNT_KEY_FILE or GOOGLE_SERVICE_ACCOUNT_KEY_JSON to enable Google Drive storage.');
 const drive = driveFileId
   ? createGoogleDrive(driveKeyFile ? path.resolve(root, driveKeyFile) : '', driveKeyJson)
@@ -232,7 +235,9 @@ async function serveExpenseAttachment(request, response) {
 
 async function api(request, response) {
   if (request.method === 'GET' && (request.url === '/api/health' || request.url === '/health')) {
-    return sendJson(response, 200, { ok: true, storage: driveFileId ? 'google-drive' : 'excel', workbook: driveFileId ? 'Google Drive: ssn_treasury.xlsx' : path.basename(workbookPath) });
+    const data = await repository.read().catch(() => null);
+    const adminConfigured = Boolean(data?.owners?.some((owner) => owner.role === 'Admin'));
+    return sendJson(response, 200, { ok: true, storage: driveFileId ? 'google-drive' : 'excel', workbook: driveFileId ? 'Google Drive: ssn_treasury.xlsx' : path.basename(workbookPath), adminConfigured });
   }
   if (request.method !== 'POST' || request.url !== '/api') {
     return sendJson(response, 404, { error: 'API route not found.' });
@@ -412,7 +417,7 @@ async function staticFile(request, response) {
 
 await repository.initialize();
 const adminAccount = (await repository.read()).owners.find((owner) => owner.role === 'Admin');
-if (!adminAccount) console.warn('No Admin account exists. Add a row with Role=Admin to Owner Details.');
+if (!adminAccount) console.warn('No Admin account exists. Add a row with Role=Admin to the Google Sheet Owner Details before Admin login or owner-related approval actions.');
 const server = http.createServer((request, response) => {
   applyCors(request, response);
   if (request.method === 'OPTIONS') {

@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: ssn-community-finance-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: GOOGLE_DRIVE_FILE_ID
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_KEY_JSON
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: https://ssn-community-finance.pages.dev
