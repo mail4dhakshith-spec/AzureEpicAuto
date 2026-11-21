@@ -33,7 +33,7 @@ if (process.env.NODE_ENV === 'production' && (!driveFileId || (!driveKeyFile && 
 }
 if (Boolean(driveFileId) !== Boolean(driveKeyFile || driveKeyJson)) throw new Error('Set GOOGLE_DRIVE_FILE_ID and GOOGLE_SERVICE_ACCOUNT_KEY_FILE or GOOGLE_SERVICE_ACCOUNT_KEY_JSON to enable Google Drive storage.');
 const drive = driveFileId
-  ? createGoogleDrive(driveKeyFile ? path.resolve(root, driveKeyFile) : '', driveKeyJson)
+  ? createGoogleDrive(driveKeyFile, driveKeyJson, root)
   : null;
 const repository = drive
   ? new GoogleDriveExcelRepository(workbookPath, { drive, fileId: driveFileId })

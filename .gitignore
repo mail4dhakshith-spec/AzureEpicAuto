@@ -8,3 +8,8 @@ data/*.bak
 data/*.tmp.xlsx
 data/payment-evidence/
 data/expense-attachments/
+data/income-attachments/
+google/*.json
+*.pem
+credentials.json
+service-account*.json
