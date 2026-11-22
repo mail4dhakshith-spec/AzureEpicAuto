@@ -1,5 +1,0 @@
-{
-  "buildCommand": "NODE_ENV=production npm run build",
-  "serveCommand": "NODE_ENV=production npm start",
-  "healthCheckPath": "/health"
-}
