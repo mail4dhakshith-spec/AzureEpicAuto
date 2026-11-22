@@ -13,6 +13,8 @@ Set these in the GoDaddy Node.js App environment:
 
 Do not set `VITE_*` or secret values in browser-visible variables.
 
+The React app defaults to the same-origin API path, `/api`. Keep `VITE_API_URL=/api` when the frontend and API share a host; this avoids cross-origin preflight requests. If using separate hosts, set `ALLOWED_ORIGINS` to the exact frontend origins. The Airo production and preview origins are explicitly allowed by the server.
+
 ## Google key repair
 
 An `invalid_grant: Invalid JWT Signature` means the private key is invalid, replaced, revoked, mismatched, or generated for another account/key version.

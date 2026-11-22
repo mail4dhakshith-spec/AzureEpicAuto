@@ -40,8 +40,14 @@ const repository = drive
   : new ExcelTreasuryRepository(workbookPath);
 let repositoryReady = false;
 const ownerLoginAttempts = new Map();
-const allowedOrigins = new Set((process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || 'http://localhost:5173,http://127.0.0.1:5173,https://ssn-community-finance.pages.dev')
-  .split(',').map((origin) => origin.trim()).filter(Boolean));
+const airoOrigins = [
+  'https://psa2lrnjxu.c39.airoapp.ai',
+  'https://psa2lrnjxu.preview.c39.airoapp.ai',
+];
+const allowedOrigins = new Set([
+  ...(process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || 'http://localhost:5173,http://127.0.0.1:5173,https://ssn-community-finance.pages.dev').split(','),
+  ...airoOrigins,
+].map((origin) => origin.trim()).filter(Boolean));
 
 function applyCors(request, response) {
   const origin = String(request.headers.origin || '').trim();
