@@ -310,6 +310,15 @@ async function api(request, response) {
         requireAdmin(user);
         result = { owner: await repository.updateOwner(body.id, body.owner || {}) };
         break;
+      case 'getMyProfile':
+        result = { owner: await repository.getMyProfile(user) };
+        break;
+      case 'updateMyProfile':
+        result = { owner: await repository.updateMyProfile(body.owner || {}, user) };
+        break;
+      case 'changeMyPassword':
+        result = await repository.changeMyPassword(body, user);
+        break;
       case 'deleteOwner':
         requireAdmin(user);
         result = await repository.deleteOwner(body.id);

@@ -2,9 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownLeft, ArrowUpRight, BadgeCheck, Bell, CalendarDays, Check,
   CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleHelp,
-  Clock3, Download, FileSpreadsheet, FileText, Filter, LayoutDashboard,
-  LogOut, Menu, MoreHorizontal, Pencil, Plus, Search, Settings2, ShieldCheck,
-  Paperclip, Trash2, UsersRound, WalletCards, X,
+  Clock3, Download, FileSpreadsheet, FileText, Filter, KeyRound, LayoutDashboard,
+  LogOut, Menu, MoreHorizontal, Pencil, Plus, Save, Search, Settings2, ShieldCheck,
+  Paperclip, Trash2, UserRound, UsersRound, WalletCards, X,
 } from 'lucide-react';
 import AuthScreen from './auth/AuthScreen.jsx';
 import { getApiUrl } from './apiUrl.js';
@@ -49,6 +49,7 @@ const NAV_ITEMS = [
   { id: 'owners-maintenance', label: 'Owners Maintenance Details', icon: WalletCards },
   { id: 'quarterly', label: 'Quarterly Payment Management', icon: CalendarDays },
   { id: 'owners', label: 'Owners', icon: UsersRound },
+  { id: 'my-profile', label: 'My Profile', icon: UserRound },
 ];
 const ADMIN_NAV_ITEM_IDS = new Set(['expenses', 'owners-maintenance', 'quarterly', 'owners']);
 
@@ -242,20 +243,45 @@ function TreasuryApp({ role, user, onSignOut }) {
   const [editingOwner, setEditingOwner] = useState(null);
   const [periodMenu, setPeriodMenu] = useState(false);
   const [income, setIncome] = useState([]);
+  const [myProfile, setMyProfile] = useState(null);
+  const [myProfileLoading, setMyProfileLoading] = useState(true);
+  const [myProfileError, setMyProfileError] = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [passwordSaving, setPasswordSaving] = useState(false);
   const importRef = useRef(null);
   const evidenceInputRef = useRef(null);
   const demoMode = !API_URL;
   const driveMode = Boolean(API_URL && DATABASE_GOOGLE_SHEET_URL);
-  const displayName = user.user_metadata?.full_name || user.user_metadata?.name || user.phone || 'Treasury user';
+  const displayName = myProfile?.name || user.user_metadata?.full_name || user.user_metadata?.name || user.phone || 'Treasury user';
   const initials = displayName.split(/[\s@+.-]+/).filter(Boolean).map((part) => part[0]).slice(0, 2).join('').toUpperCase();
   const navItems = NAV_ITEMS.filter((item) => role === 'admin'
     ? !ADMIN_NAV_ITEM_IDS.has(item.id)
-    : ['dashboard', 'my-maintenance', 'income'].includes(item.id));
+    : ['dashboard', 'my-maintenance', 'income', 'my-profile'].includes(item.id));
   const adminNavItems = role === 'admin' ? NAV_ITEMS.filter((item) => ADMIN_NAV_ITEM_IDS.has(item.id)) : [];
 
   useEffect(() => {
     localStorage.setItem('ssn-treasury-financial-year', selectedFinancialYear);
   }, [selectedFinancialYear]);
+
+  useEffect(() => {
+    let active = true;
+    setMyProfileLoading(true);
+    setMyProfileError('');
+    if (!API_URL) {
+      const owner = data.owners.find((item) => String(item.id) === String(user.id)) || null;
+      setMyProfile(owner);
+      setMyProfileLoading(false);
+      return () => { active = false; };
+    }
+    request('getMyProfile').then((result) => {
+      if (active) setMyProfile(result.owner);
+    }).catch((error) => {
+      if (active) setMyProfileError(error.message || 'Your profile could not be loaded.');
+    }).finally(() => {
+      if (active) setMyProfileLoading(false);
+    });
+    return () => { active = false; };
+  }, [user.id]);
 
   useEffect(() => {
     if (ADMIN_NAV_ITEM_IDS.has(page)) setAdminMenuOpen(true);
@@ -309,6 +335,42 @@ function TreasuryApp({ role, user, onSignOut }) {
   const filteredPayments = useMemo(() => data.payments.filter((payment) => `${payment.id} ${payment.owner || ''} ${payment.reference || ''}`.toLowerCase().includes(query.toLowerCase())), [data.payments, query]);
 
   const notify = (message) => setNotice(message);
+
+  async function saveMyProfile(profile) {
+    setProfileSaving(true);
+    try {
+      const result = API_URL
+        ? await request('updateMyProfile', { owner: profile })
+        : { owner: { ...myProfile, ...profile } };
+      const updatedOwner = result.owner;
+      setMyProfile(updatedOwner);
+      setMyProfileError('');
+      const ownerId = String(updatedOwner.id || updatedOwner.ownerId || user.id);
+      const updatePaymentOwnerName = (payment) => String(payment.ownerId) === ownerId
+        ? { ...payment, ownerName: updatedOwner.name, owner: updatedOwner.name }
+        : payment;
+      setData((current) => ({
+        ...current,
+        owners: current.owners.map((owner) => String(owner.id) === ownerId ? { ...owner, ...updatedOwner } : owner),
+        maintenance: (current.maintenance || []).map(updatePaymentOwnerName),
+        payments: (current.payments || []).map(updatePaymentOwnerName),
+      }));
+      setMyMaintenancePayments((current) => current.map(updatePaymentOwnerName));
+      return updatedOwner;
+    } finally {
+      setProfileSaving(false);
+    }
+  }
+
+  async function changeMyPassword(passwordDetails) {
+    if (!API_URL) throw new Error('Password changes require a connected API server.');
+    setPasswordSaving(true);
+    try {
+      return await request('changeMyPassword', passwordDetails);
+    } finally {
+      setPasswordSaving(false);
+    }
+  }
 
   async function saveRecord(action, payload, update) {
     setBusy(true);
@@ -626,7 +688,7 @@ function TreasuryApp({ role, user, onSignOut }) {
       <main className="main-area">
         <header className="topbar">
           <div className="topbar-left"><button className="icon-button menu-button" aria-label="Open navigation" onClick={() => setMobileNav(true)}><Menu size={19} /></button><div className="breadcrumb">Treasury <ChevronRight size={14} /> <span>{currentTitle}</span></div></div>
-          <div className="topbar-right"><div className="connection-state"><span className={`connection-dot ${demoMode ? 'demo-dot' : ''}`} />{demoMode ? 'Demo workspace' : 'Google Sheets connected'}</div>{role === 'admin' && <button className="icon-button notification-button" aria-label="Open expense requests" onClick={() => setPage('expenses')}><Bell size={18} />{pendingCount > 0 && <i />}</button>}<div className="topbar-avatar">AM</div><button className="icon-button topbar-signout" aria-label="Sign out" title="Sign out" onClick={onSignOut}><LogOut size={17} /></button></div>
+          <div className="topbar-right"><div className="connection-state"><span className={`connection-dot ${demoMode ? 'demo-dot' : ''}`} />{demoMode ? 'Demo workspace' : 'Google Sheets connected'}</div>{role === 'admin' && <button className="icon-button notification-button" aria-label="Open expense requests" onClick={() => setPage('expenses')}><Bell size={18} />{pendingCount > 0 && <i />}</button>}<div className="topbar-avatar">{initials}</div><button className="icon-button topbar-signout" aria-label="Sign out" title="Sign out" onClick={onSignOut}><LogOut size={17} /></button></div>
         </header>
 
         <div className="page-content">
@@ -641,6 +703,7 @@ function TreasuryApp({ role, user, onSignOut }) {
 
           {page === 'quarterly' && role === 'admin' && <QuarterlyManagementPage owners={data.owners || []} financialYears={data.financialYears || []} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} onSave={saveFinancialYear} onGenerate={generateQuarterlyMaintenanceBulk} busy={busy} />}
           {page === 'owners' && <OwnersPage owners={filteredOwners} query={query} setQuery={setQuery} canManage={role === 'admin'} onNew={() => { setEditingOwner(null); setModal('owner'); }} onImport={() => importRef.current?.click()} onView={setSelectedOwner} onDelete={deleteOwner} />}
+          {page === 'my-profile' && <MyProfilePage profile={myProfile} loading={myProfileLoading} loadError={myProfileError} profileSaving={profileSaving} passwordSaving={passwordSaving} canChangePassword={Boolean(API_URL)} onSaveProfile={saveMyProfile} onChangePassword={changeMyPassword} />}
           {page === 'reports' && <ReportsPage data={{ ...data, maintenance: (data.maintenance || []).filter((item) => String(item.financialYear || '').trim() === selectedFinancialYear) }} quarter={quarter} setQuarter={setQuarter} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} onExport={exportReport} role={role} />}
         </div>
       </main>
@@ -706,6 +769,131 @@ function TreasuryApp({ role, user, onSignOut }) {
       {selectedExpense && <Modal title="Expense request" onClose={() => setSelectedExpense(null)}><ExpenseDetail expense={selectedExpense} canReview={role === 'admin'} onUpdate={updateExpenseStatus} onPay={role === 'admin' ? () => updateExpenseStatus(selectedExpense, 'Paid') : null} onDelete={deleteExpense} busy={busy} /></Modal>}
     </div>
   );
+}
+
+function MyProfilePage({ profile, loading, loadError, profileSaving, passwordSaving, canChangePassword, onSaveProfile, onChangePassword }) {
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({});
+  const [profileFeedback, setProfileFeedback] = useState(null);
+  const [passwordFeedback, setPasswordFeedback] = useState(null);
+
+  useEffect(() => {
+    if (profile) {
+      setForm({
+        name: profile.name || '',
+        mobileNumber: profile.mobileNumber || profile.phone || '',
+        secondaryMobileNumber: profile.secondaryMobileNumber || profile.secondaryPhone || '',
+        email: profile.email || '',
+        secondaryEmail: profile.secondaryEmail || '',
+        address: profile.address || '',
+      });
+    }
+  }, [profile]);
+
+  async function submitProfile(event) {
+    event.preventDefault();
+    setProfileFeedback(null);
+    try {
+      const updatedProfile = await onSaveProfile(form);
+      setForm({
+        name: updatedProfile.name || '',
+        mobileNumber: updatedProfile.mobileNumber || updatedProfile.phone || '',
+        secondaryMobileNumber: updatedProfile.secondaryMobileNumber || updatedProfile.secondaryPhone || '',
+        email: updatedProfile.email || '',
+        secondaryEmail: updatedProfile.secondaryEmail || '',
+        address: updatedProfile.address || '',
+      });
+      setEditing(false);
+      setProfileFeedback({ type: 'success', message: 'Your profile was updated successfully.' });
+    } catch (error) {
+      setProfileFeedback({ type: 'error', message: error.message || 'Your profile could not be updated.' });
+    }
+  }
+
+  async function submitPassword(event) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
+    const newPassword = String(values.get('newPassword') || '');
+    const confirmPassword = String(values.get('confirmPassword') || '');
+    setPasswordFeedback(null);
+    if (newPassword !== confirmPassword) {
+      setPasswordFeedback({ type: 'error', message: 'New password and confirmation do not match.' });
+      return;
+    }
+    try {
+      await onChangePassword({
+        currentPassword: values.get('currentPassword'),
+        newPassword,
+        confirmPassword,
+      });
+      formElement.reset();
+      setPasswordFeedback({ type: 'success', message: 'Your password was updated successfully.' });
+    } catch (error) {
+      setPasswordFeedback({ type: 'error', message: error.message || 'Your password could not be updated.' });
+    }
+  }
+
+  const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+  const initials = String(profile?.name || '').split(/\s+/).filter(Boolean).map((part) => part[0]).slice(0, 2).join('').toUpperCase();
+
+  return <>
+    <PageHeading eyebrow="ACCOUNT SETTINGS" title="My Profile" description="View and update your own contact details and account password." />
+    {loading
+      ? <div className="panel profile-loading" role="status"><span className="profile-spinner" />Loading your profile…</div>
+      : !profile
+        ? <div className="panel profile-load-error" role="alert">{loadError || 'Your profile could not be found. Contact an administrator.'}</div>
+        : <div className="profile-page">
+          <section className="profile-hero panel">
+            <div className="profile-hero-avatar">{initials || <UserRound size={23} />}</div>
+            <div className="profile-hero-copy"><span>MY ACCOUNT</span><h2>{profile.name}</h2><p>{profile.phase} · Plot {profile.plotNumber}</p></div>
+            <BadgeCheck size={21} aria-label={`${profile.role || 'Owner'} account`} />
+          </section>
+          <form className="profile-details panel" onSubmit={submitProfile}>
+            <div className="profile-section-heading">
+              <div><h2>Owner details</h2><p>Keep your contact information up to date.</p></div>
+              {!editing
+                ? <button className="button button-quiet" type="button" onClick={() => { setEditing(true); setProfileFeedback(null); }}><Pencil size={15} /> Edit Profile</button>
+                : <div className="profile-inline-actions"><button className="button button-quiet" type="button" disabled={profileSaving} onClick={() => {
+                  setForm({
+                    name: profile.name || '',
+                    mobileNumber: profile.mobileNumber || profile.phone || '',
+                    secondaryMobileNumber: profile.secondaryMobileNumber || profile.secondaryPhone || '',
+                    email: profile.email || '',
+                    secondaryEmail: profile.secondaryEmail || '',
+                    address: profile.address || '',
+                  });
+                  setEditing(false);
+                  setProfileFeedback(null);
+                }}>Cancel</button><button className="button button-primary" type="submit" disabled={profileSaving}><Save size={15} />{profileSaving ? 'Saving…' : 'Save Changes'}</button></div>}
+            </div>
+            <div className="profile-fields">
+              <label>Owner ID<input value={profile.id || profile.ownerId || ''} readOnly /></label>
+              <label>Phase Number<input value={profile.phase || ''} readOnly /></label>
+              <label>Plot Number<input value={profile.plotNumber || ''} readOnly /></label>
+              <label>Created Date<input value={profile.createdDate || ''} readOnly /></label>
+              <label>Owner Name<input value={form.name || ''} maxLength="120" required disabled={!editing} onChange={(event) => setField('name', event.target.value)} /></label>
+              <label>Primary Mobile Number<input type="tel" value={form.mobileNumber || ''} maxLength="24" pattern="\+?[0-9\s()-]{8,24}" title="Enter a valid phone number." required disabled={!editing} onChange={(event) => setField('mobileNumber', event.target.value)} /></label>
+              <label>Secondary Mobile Number<input type="tel" value={form.secondaryMobileNumber || ''} maxLength="24" pattern="\+?[0-9\s()-]{8,24}" title="Enter a valid phone number." disabled={!editing} onChange={(event) => setField('secondaryMobileNumber', event.target.value)} /></label>
+              <label>Email Address<input type="email" value={form.email || ''} maxLength="160" disabled={!editing} onChange={(event) => setField('email', event.target.value)} /></label>
+              <label>Secondary Email Address<input type="email" value={form.secondaryEmail || ''} maxLength="160" disabled={!editing} onChange={(event) => setField('secondaryEmail', event.target.value)} /></label>
+              <label className="profile-address-field">Address<textarea rows="3" maxLength="300" value={form.address || ''} disabled={!editing} onChange={(event) => setField('address', event.target.value)} /></label>
+            </div>
+            {profileFeedback && <p className={`profile-feedback ${profileFeedback.type}`} role={profileFeedback.type === 'error' ? 'alert' : 'status'}>{profileFeedback.message}</p>}
+          </form>
+          <form className="profile-password panel" onSubmit={submitPassword}>
+            <div className="profile-section-heading"><div><h2>Change Password</h2><p>Confirm your current password before choosing a new one.</p></div><KeyRound size={19} /></div>
+            <label>Current Password<input name="currentPassword" type="password" autoComplete="current-password" required disabled={!canChangePassword || passwordSaving} /></label>
+            <div className="form-grid">
+              <label>New Password<input name="newPassword" type="password" autoComplete="new-password" minLength="12" maxLength="256" required disabled={!canChangePassword || passwordSaving} /></label>
+              <label>Confirm New Password<input name="confirmPassword" type="password" autoComplete="new-password" minLength="12" maxLength="256" required disabled={!canChangePassword || passwordSaving} /></label>
+            </div>
+            {!canChangePassword && <p className="profile-feedback">Connect to the API server to change your password.</p>}
+            {passwordFeedback && <p className={`profile-feedback ${passwordFeedback.type}`} role={passwordFeedback.type === 'error' ? 'alert' : 'status'}>{passwordFeedback.message}</p>}
+            <div className="profile-password-actions"><span>Passwords are securely hashed.</span><button className="button button-primary" type="submit" disabled={!canChangePassword || passwordSaving}><KeyRound size={15} />{passwordSaving ? 'Updating…' : 'Update Password'}</button></div>
+          </form>
+        </div>}
+  </>;
 }
 
 function PageHeading({ eyebrow, title, description, actions }) {
@@ -1020,13 +1208,14 @@ function maintenanceBalance(payment) {
 }
 
 function MyMaintenancePage({ payments, loading, onEditPayment }) {
-  const [financialYearFilter, setFinancialYearFilter] = useState('All');
+  const currentFinancialYear = financialYear();
+  const [financialYearFilter, setFinancialYearFilter] = useState(currentFinancialYear);
   const [quarterFilter, setQuarterFilter] = useState('All quarters');
   const [statusFilter, setStatusFilter] = useState('All');
   const yearFor = (payment) => payment.financialYear
     || String(payment.title || '').match(/FY ([0-9]{4}-[0-9]{2})/)?.[1]
     || 'Unassigned';
-  const financialYears = [...new Set(payments.map(yearFor))].sort((a, b) => {
+  const financialYears = [...new Set([currentFinancialYear, ...payments.map(yearFor)])].sort((a, b) => {
     if (a === 'Unassigned') return 1;
     if (b === 'Unassigned') return -1;
     return Number(b.slice(0, 4)) - Number(a.slice(0, 4));

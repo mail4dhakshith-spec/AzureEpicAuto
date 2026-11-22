@@ -1,8 +1,17 @@
-import { createHmac, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
 const PASSWORD_MIN_LENGTH = 12;
 const PASSWORD_MAX_LENGTH = 256;
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
+
+export function hashPassword(password) {
+  if (typeof password !== 'string' || password.length < PASSWORD_MIN_LENGTH || password.length > PASSWORD_MAX_LENGTH) {
+    throw new Error(`Password must be ${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} characters.`);
+  }
+  const salt = randomBytes(16);
+  const hash = scryptSync(password, salt, 64);
+  return `scrypt$${salt.toString('base64url')}$${hash.toString('base64url')}`;
+}
 
 export async function verifyPassword(password, storedPassword) {
   if (typeof password !== 'string' || typeof storedPassword !== 'string') return false;

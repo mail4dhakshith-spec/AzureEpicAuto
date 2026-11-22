@@ -1,5 +1,6 @@
 import { access, mkdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
+import { hashPassword, verifyPassword } from './auth.js';
 import { isExpenseAttachmentFilename } from './expenseAttachments.js';
 import { isEvidenceDataUri, isEvidenceFilename, isDriveEvidenceReference } from './paymentEvidence.js';
 import readExcelFile from 'read-excel-file/node';
@@ -85,10 +86,16 @@ function actorName(user) {
 
 function storeOwnerPassword(password) {
   if (!password) throw new Error('Set a password for this Owner.');
-  if (typeof password !== 'string' || password.length < 12 || password.length > 256) {
-    throw new Error('Password must be 12–256 characters.');
+  return hashPassword(password);
+}
+
+function authenticatedOwnerId(user) {
+  if (!['owner', 'admin'].includes(user?.app_metadata?.role)) {
+    throw Object.assign(new Error('Owner or Admin access is required.'), { status: 403 });
   }
-  return password;
+  const ownerId = String(user.app_metadata.ownerId || user.id || '');
+  if (!ownerId) throw Object.assign(new Error('No Owner ID is linked to this account.'), { status: 403 });
+  return ownerId;
 }
 
 function publicOwner(owner) {
@@ -407,6 +414,51 @@ export class ExcelTreasuryRepository {
     });
   }
 
+  async getMyProfile(user) {
+    const ownerId = authenticatedOwnerId(user);
+    const data = await this.read();
+    const owner = data.owners.find((item) => item.ownerId === ownerId);
+    if (!owner) throw Object.assign(new Error('Owner profile not found.'), { status: 404 });
+    return publicOwner(owner);
+  }
+
+  async updateMyProfile(input, user) {
+    const ownerId = authenticatedOwnerId(user);
+    return this.transaction((data) => {
+      const index = data.owners.findIndex((owner) => owner.ownerId === ownerId);
+      if (index < 0) throw Object.assign(new Error('Owner profile not found.'), { status: 404 });
+      const current = data.owners[index];
+      const updated = {
+        ...current,
+        name: input.name === undefined ? current.name : clean(input.name, 120),
+        mobileNumber: input.mobileNumber === undefined ? current.mobileNumber : clean(input.mobileNumber, 24),
+        secondaryMobileNumber: input.secondaryMobileNumber === undefined ? current.secondaryMobileNumber : clean(input.secondaryMobileNumber, 24),
+        email: input.email === undefined ? current.email : clean(input.email, 160),
+        secondaryEmail: input.secondaryEmail === undefined ? current.secondaryEmail : clean(input.secondaryEmail, 160),
+        address: input.address === undefined ? current.address : clean(input.address, 300),
+      };
+      this.validateOwner(updated, data.owners.filter((owner) => owner.ownerId !== ownerId));
+      data.owners[index] = updated;
+      for (const payment of data.maintenance) {
+        if (payment.ownerId === ownerId) payment.ownerName = updated.name;
+      }
+      return publicOwner(updated);
+    });
+  }
+
+  async changeMyPassword({ currentPassword, newPassword, confirmPassword }, user) {
+    const ownerId = authenticatedOwnerId(user);
+    return this.transaction(async (data) => {
+      const owner = data.owners.find((item) => item.ownerId === ownerId);
+      if (!owner) throw Object.assign(new Error('Owner profile not found.'), { status: 404 });
+      if (!await verifyPassword(currentPassword, owner.password)) throw new Error('Current password is incorrect.');
+      if (newPassword !== confirmPassword) throw new Error('New password and confirmation do not match.');
+      if (await verifyPassword(newPassword, owner.password)) throw new Error('New password must be different from the current password.');
+      owner.password = hashPassword(newPassword);
+      return { passwordUpdated: true };
+    });
+  }
+
   async deleteOwner(ownerId) {
     return this.transaction((data) => {
       const index = data.owners.findIndex((owner) => owner.ownerId === String(ownerId));
@@ -470,6 +522,7 @@ export class ExcelTreasuryRepository {
     if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(owner.username)) throw new Error('Username must be 3–32 letters, numbers, dots, underscores, or hyphens.');
     if (!PHASES.includes(owner.phase)) throw new Error('Choose Phase 1, Phase 2, or Phase 3.');
     if (!/^\+?[\d\s()-]{8,24}$/.test(owner.mobileNumber)) throw new Error('Enter a valid mobile number.');
+    if (owner.secondaryMobileNumber && !/^\+?[\d\s()-]{8,24}$/.test(owner.secondaryMobileNumber)) throw new Error('Enter a valid secondary mobile number.');
     if (owner.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(owner.email)) throw new Error('Enter a valid email address.');
     if (owner.secondaryEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(owner.secondaryEmail)) throw new Error('Enter a valid secondary email address.');
     const mobile = normalizedPhone(owner.mobileNumber);

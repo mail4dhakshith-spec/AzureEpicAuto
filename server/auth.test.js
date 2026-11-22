@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomBytes, scryptSync } from 'node:crypto';
 import test from 'node:test';
-import { createSessionToken, verifyPassword, verifySessionToken } from './auth.js';
+import { createSessionToken, hashPassword, verifyPassword, verifySessionToken } from './auth.js';
 
 const secret = 'test-secret-with-at-least-thirty-two-characters';
 
@@ -20,6 +20,17 @@ test('verifies scrypt password hashes', async () => {
   const storedPassword = `scrypt$${salt.toString('base64url')}$${hash.toString('base64url')}`;
   assert.equal(await verifyPassword(password, storedPassword), true);
   assert.equal(await verifyPassword('wrong password', storedPassword), false);
+});
+
+test('hashes newly selected passwords with a unique salt', async () => {
+  const password = 'Another secure password 2!';
+  const firstHash = hashPassword(password);
+  const secondHash = hashPassword(password);
+  assert.match(firstHash, /^scrypt\$/);
+  assert.notEqual(firstHash, secondHash);
+  assert.equal(await verifyPassword(password, firstHash), true);
+  assert.equal(await verifyPassword('wrong password', firstHash), false);
+  assert.throws(() => hashPassword('short'), /Password must be 12/);
 });
 
 test('signs role-bound sessions and rejects expiry or tampering', () => {

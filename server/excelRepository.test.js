@@ -61,6 +61,112 @@ test('validates duplicate owners and serializes concurrent inserts', async () =>
   });
 });
 
+test('loads and updates only the authenticated owner profile without changing linked records', async () => {
+  await withRepository(async (repository) => {
+    const owner = await repository.createOwner(ownerInput('Nia Roe', '+15551000041', 'Phase 2', 'B-41'), admin);
+    const otherOwner = await repository.createOwner(ownerInput('Omar Roe', '+15551000042', 'Phase 3', 'C-42'), admin);
+    await repository.transaction((data) => {
+      data.owners.find((item) => item.ownerId === otherOwner.id).role = 'Admin';
+    });
+    const [payment] = (await repository.generateQuarterlyMaintenance({
+      ownerId: owner.id, phase: owner.phase, quarter: 'Q1', financialYear: '2026-27',
+    }, admin)).created;
+    await repository.createExpense({ ownerId: owner.id, title: 'Profile-linked expense', amount: 100, expenseType: 'Road' }, admin);
+    const expensesBefore = (await repository.read()).expenses;
+    const ownerSession = { id: owner.id, app_metadata: { role: 'owner', ownerId: owner.id } };
+
+    const loaded = await repository.getMyProfile(ownerSession);
+    assert.equal(loaded.id, owner.id);
+    assert.equal('password' in loaded, false);
+
+    const updated = await repository.updateMyProfile({
+      ownerId: otherOwner.id,
+      role: 'Admin',
+      phase: 'Phase 3',
+      plotNumber: 'C-99',
+      name: 'Nia Updated',
+      mobileNumber: '+15551000043',
+      secondaryMobileNumber: '+15551000044',
+      email: 'nia.updated@example.com',
+      secondaryEmail: 'nia.secondary@example.com',
+      address: 'Updated Community Road',
+    }, ownerSession);
+
+    assert.equal(updated.id, owner.id);
+    assert.equal(updated.name, 'Nia Updated');
+    assert.equal(updated.phase, 'Phase 2');
+    assert.equal(updated.plotNumber, 'B-41');
+    assert.equal(updated.role, 'Member');
+    assert.equal(updated.mobileNumber, '+15551000043');
+    assert.equal(updated.secondaryMobileNumber, '+15551000044');
+    assert.equal(updated.address, 'Updated Community Road');
+    const data = await repository.read();
+    assert.equal(data.owners.find((item) => item.ownerId === otherOwner.id).name, 'Omar Roe');
+    assert.equal(data.maintenance[0].ownerName, 'Nia Updated');
+    assert.equal(data.maintenance[0].status, payment.status);
+    assert.equal(data.maintenance[0].paymentAmount, payment.paymentAmount);
+    assert.deepEqual(data.expenses, expensesBefore);
+    await assert.rejects(repository.getMyProfile({ id: owner.id, app_metadata: { role: 'viewer', ownerId: owner.id } }), /Owner or Admin access/);
+    const updatedAdminProfile = await repository.updateMyProfile({
+      name: 'Omar Admin',
+      mobileNumber: '+15551000045',
+    }, { id: otherOwner.id, app_metadata: { role: 'admin', ownerId: otherOwner.id } });
+    assert.equal(updatedAdminProfile.name, 'Omar Admin');
+    assert.equal((await repository.getMyProfile(ownerSession)).name, 'Nia Updated');
+    await assert.rejects(repository.updateMyProfile({ mobileNumber: 'bad' }, ownerSession), /valid mobile number/);
+    await assert.rejects(repository.updateMyProfile({ secondaryMobileNumber: 'bad' }, ownerSession), /valid secondary mobile number/);
+    await assert.rejects(repository.updateMyProfile({ email: 'not-an-email' }, ownerSession), /valid email address/);
+  });
+});
+
+test('allows an owner or admin to change only their own password after current-password verification', async () => {
+  await withRepository(async (repository) => {
+    const owner = await repository.createOwner(ownerInput('Password Owner', '+15551000046', 'Phase 1', 'A-46'), admin);
+    const adminOwner = await repository.createOwner(ownerInput('Profile Admin', '+15551000047', 'Phase 2', 'B-47'), admin);
+    await repository.transaction((data) => {
+      data.owners.find((item) => item.ownerId === adminOwner.id).role = 'Admin';
+    });
+    const ownerSession = { id: owner.id, app_metadata: { role: 'owner', ownerId: owner.id } };
+    const adminSession = { id: adminOwner.id, app_metadata: { role: 'admin', ownerId: adminOwner.id } };
+    const originalPassword = 'Test-owner-password-1!';
+    const newPassword = 'My replacement password 2!';
+
+    await assert.rejects(repository.changeMyPassword({
+      currentPassword: 'incorrect password',
+      newPassword,
+      confirmPassword: newPassword,
+    }, ownerSession), /Current password is incorrect/);
+    await assert.rejects(repository.changeMyPassword({
+      currentPassword: originalPassword,
+      newPassword,
+      confirmPassword: 'different replacement password',
+    }, ownerSession), /do not match/);
+    await repository.changeMyPassword({
+      currentPassword: originalPassword,
+      newPassword,
+      confirmPassword: newPassword,
+    }, ownerSession);
+    const storedOwner = (await repository.read()).owners.find((item) => item.ownerId === owner.id);
+    assert.match(storedOwner.password, /^scrypt\$/);
+    assert.equal(await verifyPassword(originalPassword, storedOwner.password), false);
+    assert.equal(await verifyPassword(newPassword, storedOwner.password), true);
+
+    const adminPassword = 'Admin replacement password 3!';
+    await repository.changeMyPassword({
+      currentPassword: originalPassword,
+      newPassword: adminPassword,
+      confirmPassword: adminPassword,
+    }, adminSession);
+    const storedAdmin = (await repository.read()).owners.find((item) => item.ownerId === adminOwner.id);
+    assert.equal(await verifyPassword(adminPassword, storedAdmin.password), true);
+    await assert.rejects(repository.changeMyPassword({
+      currentPassword: originalPassword,
+      newPassword,
+      confirmPassword: newPassword,
+    }, { id: 'missing-owner', app_metadata: { role: 'owner', ownerId: 'missing-owner' } }), /Owner profile not found/);
+  });
+});
+
 test('creates unique expenses and records approvals, rejection history, and payment status', async () => {
   await withRepository(async (repository) => {
     const owner = await repository.createOwner(ownerInput('Ari Nair', '+15551000010', 'Phase 1', 'A-10'), admin);
