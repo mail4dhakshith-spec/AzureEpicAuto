@@ -38,6 +38,7 @@ const drive = driveFileId
 const repository = drive
   ? new GoogleDriveExcelRepository(workbookPath, { drive, fileId: driveFileId })
   : new ExcelTreasuryRepository(workbookPath);
+let repositoryReady = false;
 const ownerLoginAttempts = new Map();
 const allowedOrigins = new Set((process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || 'http://localhost:5173,http://127.0.0.1:5173,https://ssn-community-finance.pages.dev')
   .split(',').map((origin) => origin.trim()).filter(Boolean));
@@ -415,9 +416,6 @@ async function staticFile(request, response) {
   }
 }
 
-await repository.initialize();
-const adminAccount = (await repository.read()).owners.find((owner) => owner.role === 'Admin');
-if (!adminAccount) console.warn('No Admin account exists. Add a row with Role=Admin to the Google Sheet Owner Details before Admin login or owner-related approval actions.');
 const server = http.createServer((request, response) => {
   applyCors(request, response);
   if (request.method === 'OPTIONS') {
@@ -426,7 +424,13 @@ const server = http.createServer((request, response) => {
     response.end();
     return;
   }
-  if (request.method === 'GET' && request.url === '/health') return sendJson(response, 200, { ok: true });
+  if ((request.method === 'GET' || request.method === 'HEAD') && request.url === '/health') {
+    response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    return response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ ok: true }));
+  }
+  if (request.url?.startsWith('/api/') && !repositoryReady) {
+    return sendJson(response, 503, { ok: false, error: 'Treasury storage is initializing.' });
+  }
   if (request.url === '/api/auth/signin') return signIn(request, response);
   if (request.url === '/api/auth/forgot-password') return forgotPassword(request, response);
   if (request.url === '/api/auth/session') return authSession(request, response);
@@ -443,3 +447,13 @@ server.listen(port, '0.0.0.0', () => {
   console.log(`Treasury API listening on port ${port}/api`);
   console.log(driveFileId ? `Google Drive workbook: ${driveFileId} (OS-temp cache only)` : `Excel database: ${workbookPath}`);
 });
+
+repository.initialize()
+  .then(async () => {
+    const adminAccount = (await repository.read()).owners.find((owner) => owner.role === 'Admin');
+    if (!adminAccount) console.warn('No Admin account exists. Add a row with Role=Admin to the Google Sheet Owner Details before Admin login or owner-related approval actions.');
+    repositoryReady = true;
+  })
+  .catch((error) => {
+    console.error(`Treasury storage initialization failed: ${error.message}`);
+  });
