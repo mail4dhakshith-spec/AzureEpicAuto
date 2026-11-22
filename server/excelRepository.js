@@ -22,8 +22,8 @@ export const SHEETS = {
   },
   maintenance: {
     name: 'Maintenance Payment Details',
-    headers: ['Owner ID', 'Owner Name', 'Title', 'Quarter', 'Plot Number', 'Phase Number', 'Payment Amount', 'Status', 'Created Date', 'Created By', 'Payment Date', 'Payment Method', 'Reference', 'Evidence File', 'Financial Year'],
-    fields: ['ownerId', 'ownerName', 'title', 'quarter', 'plotNumber', 'phaseNumber', 'paymentAmount', 'status', 'createdDate', 'createdBy', 'paymentDate', 'paymentMethod', 'reference', 'evidenceFile', 'financialYear'],
+    headers: ['Owner ID', 'Owner Name', 'Title', 'Quarter', 'Plot Number', 'Phase Number', 'Payment Amount', 'Status', 'Created Date', 'Created By', 'Payment Date', 'Payment Method', 'Reference', 'Evidence Name', 'Evidence File', 'Financial Year'],
+    fields: ['ownerId', 'ownerName', 'title', 'quarter', 'plotNumber', 'phaseNumber', 'paymentAmount', 'status', 'createdDate', 'createdBy', 'paymentDate', 'paymentMethod', 'reference', 'evidenceName', 'evidenceFile', 'financialYear'],
   },
   income: {
     name: 'Income Details',
@@ -727,6 +727,7 @@ export class ExcelTreasuryRepository {
           paymentDate: '',
           paymentMethod: '',
           reference: '',
+          evidenceName: '',
           evidenceFile: '',
           financialYear: fy,
         };

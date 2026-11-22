@@ -409,6 +409,37 @@ test('adds Owner payment detail columns to existing Maintenance sheets without l
   }
 });
 
+test('preserves maintenance evidence names and references in the current workbook schema', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'ssn-treasury-maintenance-evidence-schema-'));
+  const filePath = path.join(directory, 'treasury.xlsx');
+  const maintenanceHeaders = [
+    'Owner ID', 'Owner Name', 'Title', 'Quarter', 'Plot Number', 'Phase Number', 'Payment Amount', 'Status',
+    'Created Date', 'Created By', 'Payment Date', 'Payment Method', 'Reference', 'Evidence Name', 'Evidence File', 'Financial Year',
+  ];
+  const maintenanceRow = [
+    'OWN-00010', 'Payment Owner', 'Quarterly maintenance FY 2026-27', 'Q1', 'A-10', '1', 1500, 'Pending Approval',
+    '2026-04-01', 'Admin', '2026-04-02', 'UPI', 'UPI-00010', 'payment-proof.jpg',
+    'data:image/jpeg;base64,/9j/2Q==', '2026-27',
+  ];
+  try {
+    await writeExcelFile([
+      { sheet: SHEETS.owners.name, data: [SHEETS.owners.headers] },
+      { sheet: SHEETS.expenses.name, data: [SHEETS.expenses.headers] },
+      { sheet: SHEETS.maintenance.name, data: [maintenanceHeaders, maintenanceRow] },
+      { sheet: SHEETS.income.name, data: [SHEETS.income.headers] },
+      { sheet: SHEETS.financialYears.name, data: [SHEETS.financialYears.headers] },
+    ]).toFile(filePath);
+    const repository = new ExcelTreasuryRepository(filePath);
+    await repository.initialize();
+    const payment = (await repository.read()).maintenance[0];
+    assert.equal(payment.evidenceName, 'payment-proof.jpg');
+    assert.equal(payment.evidenceFile, 'data:image/jpeg;base64,/9j/2Q==');
+    assert.equal(payment.financialYear, '2026-27');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('preserves existing plain-text Owner passwords in the Excel database', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'ssn-treasury-password-migration-'));
   const filePath = path.join(directory, 'treasury.xlsx');
