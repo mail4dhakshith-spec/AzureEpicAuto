@@ -424,7 +424,8 @@ const server = http.createServer((request, response) => {
     response.end();
     return;
   }
-  if ((request.method === 'GET' || request.method === 'HEAD') && request.url === '/health') {
+  const requestPath = request.url ? new URL(request.url, 'http://localhost').pathname : '/';
+  if ((request.method === 'GET' || request.method === 'HEAD') && (requestPath === '/health' || requestPath === '/healthz')) {
     response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     return response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ ok: true }));
   }
@@ -439,6 +440,10 @@ const server = http.createServer((request, response) => {
   if (request.url?.startsWith('/api/income/attachments/')) return serveIncomeAttachment(request, response);
   if (request.url?.startsWith('/api/')) return api(request, response);
   if (request.url === '/api') return api(request, response);
+  if (request.method === 'HEAD' && requestPath === '/') {
+    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    return response.end();
+  }
   if (request.method === 'GET') return staticFile(request, response);
   return sendJson(response, 404, { error: 'Route not found.' });
 });
