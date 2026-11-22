@@ -708,10 +708,10 @@ function Dashboard({ data, income = [], quarter, setQuarter, selectedFinancialYe
   const approvedIncome = income.filter((item) => item.status === 'Approved' && (!item.financialYear || item.financialYear === selectedFinancialYear)).reduce((sum, item) => sum + Number(item.amount), 0);
   const pendingIncome = income.filter((item) => item.status === 'Pending' && (!item.financialYear || item.financialYear === selectedFinancialYear)).reduce((sum, item) => sum + Number(item.amount), 0);
   const paidExpenses = overviewData.expenses.filter((item) => item.status === 'Paid' && (!item.financialYear || item.financialYear === selectedFinancialYear)).reduce((sum, item) => sum + Number(item.amount), 0);
+  const yearlyCollected = yearMaintenance.filter(isMaintenanceCollected).reduce((sum, item) => sum + Number(item.paymentAmount), 0);
   const outstandingAmount = Math.max(0, yearlyCollected + approvedIncome - paidExpenses);
   const collectedTotal = collected.reduce((sum, item) => sum + Number(item.paymentAmount), 0);
   const pendingTotal = pendingMaintenance.reduce((sum, item) => sum + Number(item.paymentAmount), 0);
-  const yearlyCollected = yearMaintenance.filter(isMaintenanceCollected).reduce((sum, item) => sum + Number(item.paymentAmount), 0);
   const quarterlyTotals = QUARTERS.map((item) => yearMaintenance.filter((record) => record.quarter === item && isMaintenanceCollected(record)).reduce((sum, record) => sum + Number(record.paymentAmount), 0));
   const phaseTotals = ['Phase 1', 'Phase 2', 'Phase 3'].map((phase) => ({
     phase,
