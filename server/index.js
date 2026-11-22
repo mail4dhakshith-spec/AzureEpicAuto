@@ -234,7 +234,7 @@ async function serveExpenseAttachment(request, response) {
 }
 
 async function api(request, response) {
-  if (request.method === 'GET' && (request.url === '/api/health' || request.url === '/health')) {
+  if (request.method === 'GET' && request.url === '/api/health') {
     const data = await repository.read().catch(() => null);
     const adminConfigured = Boolean(data?.owners?.some((owner) => owner.role === 'Admin'));
     return sendJson(response, 200, { ok: true, storage: driveFileId ? 'google-drive' : 'excel', workbook: driveFileId ? 'Google Drive: ssn_treasury.xlsx' : path.basename(workbookPath), adminConfigured });
@@ -398,7 +398,7 @@ async function staticFile(request, response) {
   }
   if (!distAvailable) return sendJson(response, 404, { error: 'Build the React app or use the Vite dev server.' });
   const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
-  const requestedFile = path.resolve(distPath, `.${pathname}`);
+  const requestedFile = path.resolve(distPath, pathname === '/' ? './index.html' : `.${pathname}`);
   if (!requestedFile.startsWith(distPath + path.sep) && requestedFile !== path.join(distPath, 'index.html')) {
     return sendJson(response, 403, { error: 'Invalid path.' });
   }
@@ -426,6 +426,7 @@ const server = http.createServer((request, response) => {
     response.end();
     return;
   }
+  if (request.method === 'GET' && request.url === '/health') return sendJson(response, 200, { ok: true });
   if (request.url === '/api/auth/signin') return signIn(request, response);
   if (request.url === '/api/auth/forgot-password') return forgotPassword(request, response);
   if (request.url === '/api/auth/session') return authSession(request, response);
