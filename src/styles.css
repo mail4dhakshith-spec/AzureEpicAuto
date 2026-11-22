@@ -50,6 +50,12 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .nav-item.active { background: #34443e; color: #d8f0db; }
 .nav-item.active::before { position: absolute; left: -16px; width: 3px; height: 22px; border-radius: 0 2px 2px 0; background: #9ed5ab; content: ''; }
 .nav-count { display: grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 4px; background: #4b3b2b; color: #efc88d; font: 500 10px 'DM Mono', monospace; }
+.admin-nav-group { display: grid; gap: 3px; }
+.admin-nav-toggle > svg:last-child { margin-left: auto; transition: transform .18s; }
+.admin-nav-toggle[aria-expanded='true'] > svg:last-child { transform: rotate(180deg); }
+.admin-nav-submenu { display: grid; gap: 3px; margin: 0 0 3px 9px; padding-left: 8px; border-left: 1px solid #3b4944; }
+.admin-nav-submenu .nav-item { min-height: 38px; height: auto; padding-left: 9px; }
+.admin-nav-submenu .nav-item span:nth-child(2) { font-size: 11px; }
 .sidebar-bottom { margin-top: auto; }
 .fy-side-card { padding: 13px 12px 12px; border: 1px solid #3b4944; border-radius: 5px; background: #27332f; }
 .fy-side-top, .fy-side-foot { display: flex; justify-content: space-between; color: #94a19b; font: 10px 'DM Mono', monospace; }

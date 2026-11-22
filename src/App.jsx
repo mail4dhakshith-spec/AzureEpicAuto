@@ -50,6 +50,7 @@ const NAV_ITEMS = [
   { id: 'quarterly', label: 'Quarterly Payment Management', icon: CalendarDays },
   { id: 'owners', label: 'Owners', icon: UsersRound },
 ];
+const ADMIN_NAV_ITEM_IDS = new Set(['expenses', 'owners-maintenance', 'quarterly', 'owners']);
 
 async function compressEvidence(file) {
   const sourceUrl = await new Promise((resolve, reject) => {
@@ -230,6 +231,7 @@ function App() {
 function TreasuryApp({ role, user, onSignOut }) {
   const [data, setData] = useState(() => API_URL ? { owners: [], adminAccounts: [], expenses: [], payments: [], maintenance: [] } : readLocal());
   const [page, setPage] = useState('dashboard');
+  const [adminMenuOpen, setAdminMenuOpen] = useState(role === 'admin');
   const [modal, setModal] = useState('');
   const [selectedMaintenancePhase, setSelectedMaintenancePhase] = useState('');
   const [selectedMaintenanceOwnerId, setSelectedMaintenanceOwnerId] = useState('');
@@ -250,13 +252,18 @@ function TreasuryApp({ role, user, onSignOut }) {
   const driveMode = Boolean(API_URL && DATABASE_GOOGLE_SHEET_URL);
   const displayName = user.user_metadata?.full_name || user.user_metadata?.name || user.phone || 'Treasury user';
   const initials = displayName.split(/[\s@+.-]+/).filter(Boolean).map((part) => part[0]).slice(0, 2).join('').toUpperCase();
-  const navItems = role === 'admin'
-    ? NAV_ITEMS
-    : NAV_ITEMS.filter((item) => ['dashboard', 'my-maintenance', 'income'].includes(item.id));
+  const navItems = NAV_ITEMS.filter((item) => role === 'admin'
+    ? !ADMIN_NAV_ITEM_IDS.has(item.id)
+    : ['dashboard', 'my-maintenance', 'income'].includes(item.id));
+  const adminNavItems = role === 'admin' ? NAV_ITEMS.filter((item) => ADMIN_NAV_ITEM_IDS.has(item.id)) : [];
 
   useEffect(() => {
     localStorage.setItem('ssn-treasury-financial-year', selectedFinancialYear);
   }, [selectedFinancialYear]);
+
+  useEffect(() => {
+    if (ADMIN_NAV_ITEM_IDS.has(page)) setAdminMenuOpen(true);
+  }, [page]);
 
   useEffect(() => {
     if (API_URL) {
@@ -562,7 +569,7 @@ function TreasuryApp({ role, user, onSignOut }) {
     }
   }
 
-  const currentTitle = navItems.find((item) => item.id === page)?.label || (page === 'reports' ? 'Reports' : 'Overview');
+  const currentTitle = [...navItems, ...adminNavItems].find((item) => item.id === page)?.label || (page === 'reports' ? 'Reports' : 'Overview');
 
   return (
     <div className="app-shell">
@@ -580,6 +587,18 @@ function TreasuryApp({ role, user, onSignOut }) {
               <Icon size={18} strokeWidth={1.8} /><span>{label}</span>{count && pendingCount > 0 && <span className="nav-count">{pendingCount}</span>}
             </button>
           ))}
+          {role === 'admin' && <div className="admin-nav-group">
+            <button className={`nav-item admin-nav-toggle ${adminNavItems.some((item) => item.id === page) ? 'active' : ''}`} aria-expanded={adminMenuOpen} onClick={() => setAdminMenuOpen((open) => !open)}>
+              <ShieldCheck size={18} strokeWidth={1.8} /><span>Admin</span><ChevronDown size={15} />
+            </button>
+            {adminMenuOpen && <div className="admin-nav-submenu" role="group" aria-label="Admin menu">
+              {adminNavItems.map(({ id, label, icon: Icon, count }) => (
+                <button key={id} className={`nav-item ${page === id ? 'active' : ''}`} onClick={() => { setPage(id); setMobileNav(false); }}>
+                  <Icon size={17} strokeWidth={1.8} /><span>{label}</span>{count && pendingCount > 0 && <span className="nav-count">{pendingCount}</span>}
+                </button>
+              ))}
+            </div>}
+          </div>}
           <button className={`nav-item ${page === 'reports' ? 'active' : ''}`} onClick={() => { setPage('reports'); setMobileNav(false); }}><CalendarDays size={18} strokeWidth={1.8} /><span>Reports</span></button>
           <button className="nav-item" onClick={() => { window.open(DATABASE_GOOGLE_SHEET_URL, '_blank', 'noopener,noreferrer'); setMobileNav(false); }}><FileSpreadsheet size={18} strokeWidth={1.8} /><span>Google Sheets</span></button>
         </nav>
