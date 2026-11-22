@@ -52,32 +52,24 @@ const NAV_ITEMS = [
 ];
 const ADMIN_NAV_ITEM_IDS = new Set(['expenses', 'owners-maintenance', 'quarterly', 'owners']);
 
-async function compressEvidence(file) {
-  const sourceUrl = await new Promise((resolve, reject) => {
+async function encodeEvidenceFile(file) {
+  const dataUrl = await new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error('The evidence image could not be read.'));
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        reject(new Error('The evidence file could not be read.'));
+        return;
+      }
+      resolve(reader.result);
+    };
+    reader.onerror = () => reject(new Error('The evidence file could not be read.'));
     reader.readAsDataURL(file);
   });
-  const image = await new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('The evidence image could not be decoded.'));
-    img.src = sourceUrl;
-  });
-  const scale = Math.min(1, 1200 / Math.max(image.width, image.height));
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(image.width * scale));
-  canvas.height = Math.max(1, Math.round(image.height * scale));
-  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-  let quality = 0.78;
-  let result = canvas.toDataURL('image/jpeg', quality);
-  while (result.length > 24000 && quality > 0.42) {
-    quality -= 0.08;
-    result = canvas.toDataURL('image/jpeg', quality);
-  }
-  if (result.length > 24000) throw new Error('Compress the evidence image further; it is too large for the Excel cell.');
-  return { mediaType: 'image/jpeg', dataBase64: result.split(',')[1] };
+  return {
+    originalName: file.name,
+    mediaType: file.type,
+    dataBase64: dataUrl.slice(dataUrl.indexOf(',') + 1),
+  };
 }
 
 function readLocal() {
@@ -236,6 +228,9 @@ function TreasuryApp({ role, user, onSignOut }) {
   const [selectedMaintenancePhase, setSelectedMaintenancePhase] = useState('');
   const [selectedMaintenanceOwnerId, setSelectedMaintenanceOwnerId] = useState('');
   const [editingMaintenance, setEditingMaintenance] = useState(null);
+  const [selectedEvidence, setSelectedEvidence] = useState(null);
+  const [myMaintenancePayments, setMyMaintenancePayments] = useState(() => data.maintenance || []);
+  const [myMaintenanceLoading, setMyMaintenanceLoading] = useState(['owner', 'admin'].includes(role) && Boolean(API_URL));
   const [quarter, setQuarter] = useState('All quarters');
   const [selectedFinancialYear, setSelectedFinancialYear] = useState(() => localStorage.getItem('ssn-treasury-financial-year') || financialYear());
   const [query, setQuery] = useState('');
@@ -248,6 +243,7 @@ function TreasuryApp({ role, user, onSignOut }) {
   const [periodMenu, setPeriodMenu] = useState(false);
   const [income, setIncome] = useState([]);
   const importRef = useRef(null);
+  const evidenceInputRef = useRef(null);
   const demoMode = !API_URL;
   const driveMode = Boolean(API_URL && DATABASE_GOOGLE_SHEET_URL);
   const displayName = user.user_metadata?.full_name || user.user_metadata?.name || user.phone || 'Treasury user';
@@ -278,6 +274,16 @@ function TreasuryApp({ role, user, onSignOut }) {
       });
     }
   }, [selectedFinancialYear]);
+
+  useEffect(() => {
+    if (!['owner', 'admin'].includes(role) || !API_URL) {
+      setMyMaintenanceLoading(false);
+      return;
+    }
+    request('getMyMaintenance').then((result) => setMyMaintenancePayments(result.maintenance || [])).catch((error) => {
+      setNotice(`Could not load your maintenance records: ${error.message}`);
+    }).finally(() => setMyMaintenanceLoading(false));
+  }, [role]);
 
   useEffect(() => {
     if (role === 'admin') request('getIncome', { financialYear: selectedFinancialYear }).then((result) => setIncome(result.income || [])).catch(() => setIncome([]));
@@ -440,33 +446,40 @@ function TreasuryApp({ role, user, onSignOut }) {
     }
   }
 
+  function openMaintenanceEditor(payment) {
+    setSelectedEvidence(null);
+    setEditingMaintenance(payment);
+  }
+
   async function submitMaintenanceDetails(event) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const file = form.get('evidence');
     setBusy(true);
     try {
-      let evidence;
-      if (file instanceof File && file.size) {
-        if (file.size > 4 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-          throw new Error('Choose a JPEG, PNG, or WebP image smaller than 4 MB.');
-        }
-        evidence = await compressEvidence(file);
+      if (!(file instanceof File) || !file.size) throw new Error('Attach payment evidence before submitting.');
+      const maxBytes = file.type === 'application/pdf' ? 10 * 1024 * 1024 : 4 * 1024 * 1024;
+      if (file.size > maxBytes || !['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+        throw new Error('Choose a PDF smaller than 10 MB or a JPEG, PNG, or WebP image smaller than 4 MB.');
       }
       const result = await request('updateOwnerMaintenanceDetails', {
         title: editingMaintenance.title,
         quarter: editingMaintenance.quarter,
         paymentDate: form.get('paymentDate'),
         paymentMethod: form.get('paymentMethod'),
+        paidAmount: form.get('paidAmount'),
         reference: form.get('reference'),
-        evidence,
+        remarks: form.get('remarks'),
+        evidence: await encodeEvidenceFile(file),
       });
       setData((current) => {
         const maintenance = current.maintenance.map((item) => item.id === result.payment.id ? result.payment : item);
         return { ...current, maintenance, payments: maintenance };
       });
+      setMyMaintenancePayments((current) => current.map((item) => item.id === result.payment.id ? result.payment : item));
       setEditingMaintenance(null);
-      notify('Payment details and evidence saved.');
+      setSelectedEvidence(null);
+      notify('Payment evidence submitted for Admin approval.');
     } catch (error) {
       notify(error.message || 'Payment details could not be saved.');
     } finally {
@@ -621,10 +634,10 @@ function TreasuryApp({ role, user, onSignOut }) {
           {page === 'income' && <IncomePage role={role} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} />}
           {page === 'expenses' && role === 'admin' && <ExpensesPage expenses={filteredExpenses} query={query} setQuery={setQuery} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} onNew={() => setModal('expense')} onSelect={setSelectedExpense} canDelete onDelete={deleteExpense} />}
           {page === 'payments' && (role === 'admin'
-            ? <OwnersMaintenancePage payments={(data.maintenance || []).filter((item) => recordMatchesFinancialYear(item, selectedFinancialYear))} owners={data.owners || []} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} onUpdateStatus={updateMaintenanceStatus} onDelete={deleteMaintenance} />
-            : <MyMaintenancePage payments={(data.maintenance || []).filter((item) => recordMatchesFinancialYear(item, selectedFinancialYear) && String(item.ownerId) === String(user.id))} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} />)}
-          {page === 'my-maintenance' && <MyMaintenancePage payments={(data.maintenance || []).filter((item) => recordMatchesFinancialYear(item, selectedFinancialYear) && String(item.ownerId) === String(user.id))} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} />}
-          {page === 'owners-maintenance' && role === 'admin' && <OwnersMaintenancePage payments={(data.maintenance || []).filter((item) => recordMatchesFinancialYear(item, selectedFinancialYear))} owners={data.owners || []} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} onUpdateStatus={updateMaintenanceStatus} onDelete={deleteMaintenance} />}
+            ? <OwnersMaintenancePage payments={(data.maintenance || []).filter((item) => recordMatchesFinancialYear(item, selectedFinancialYear))} owners={data.owners || []} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} onUpdateStatus={updateMaintenanceStatus} onDelete={deleteMaintenance} busy={busy} currentOwnerId={user.id} />
+            : <MyMaintenancePage payments={myMaintenancePayments.filter((item) => String(item.ownerId) === String(user.id))} loading={myMaintenanceLoading} onEditPayment={openMaintenanceEditor} />)}
+          {page === 'my-maintenance' && <MyMaintenancePage payments={myMaintenancePayments.filter((item) => String(item.ownerId) === String(user.id))} loading={myMaintenanceLoading} onEditPayment={openMaintenanceEditor} />}
+          {page === 'owners-maintenance' && role === 'admin' && <OwnersMaintenancePage payments={(data.maintenance || []).filter((item) => recordMatchesFinancialYear(item, selectedFinancialYear))} owners={data.owners || []} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} onUpdateStatus={updateMaintenanceStatus} onDelete={deleteMaintenance} busy={busy} currentOwnerId={user.id} />}
 
           {page === 'quarterly' && role === 'admin' && <QuarterlyManagementPage owners={data.owners || []} financialYears={data.financialYears || []} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} onSave={saveFinancialYear} onGenerate={generateQuarterlyMaintenanceBulk} busy={busy} />}
           {page === 'owners' && <OwnersPage owners={filteredOwners} query={query} setQuery={setQuery} canManage={role === 'admin'} onNew={() => { setEditingOwner(null); setModal('owner'); }} onImport={() => importRef.current?.click()} onView={setSelectedOwner} onDelete={deleteOwner} />}
@@ -651,14 +664,44 @@ function TreasuryApp({ role, user, onSignOut }) {
           <div className="form-footer"><span><ShieldCheck size={15} /> Password is saved directly in the Excel database</span><button className="button button-primary" disabled={busy}><Plus size={16} /> {editingOwner ? 'Save changes' : 'Add owner'}</button></div>
         </form>}
       </Modal>}
-      {editingMaintenance && <Modal title="Update maintenance payment" onClose={() => setEditingMaintenance(null)}><form className="record-form" onSubmit={submitMaintenanceDetails}>
-        <p className="form-intro">Update payment details for {editingMaintenance.quarter}. Status remains pending until reviewed by Admin.</p>
-        <div className="form-grid"><label>Payment date<input name="paymentDate" type="date" defaultValue={editingMaintenance.paymentDate || new Date().toISOString().slice(0, 10)} required /></label><label>Payment method<select name="paymentMethod" defaultValue={editingMaintenance.paymentMethod || ''} required><option value="" disabled>Select method</option><option>UPI</option><option>Bank transfer</option><option>Cash</option><option>Other</option></select></label></div>
-        <label>Transaction reference<input name="reference" maxLength="120" defaultValue={editingMaintenance.reference || ''} placeholder="Optional reference number" /></label>
-        <label>Payment evidence image<input name="evidence" type="file" accept="image/jpeg,image/png,image/webp" required={!editingMaintenance.evidenceFile} /></label>
-        <div className="evidence-hint">JPEG, PNG, or WebP up to 4 MB. {editingMaintenance.evidenceFile && <>Current evidence: <EvidencePreview filename={editingMaintenance.evidenceFile} /></>}</div>
-        <div className="form-footer"><span><ShieldCheck size={15} /> Only you and Admin can view this evidence</span><button className="button button-primary" disabled={busy}><Pencil size={15} /> Save payment details</button></div>
-      </form></Modal>}
+      {editingMaintenance && <Modal title="Submit maintenance payment" onClose={() => { setEditingMaintenance(null); setSelectedEvidence(null); }}>
+        <div className="maintenance-detail-panel">
+          <div className="detail-grid">
+            <span>Financial year</span><strong>{editingMaintenance.financialYear || 'Unassigned'}</strong>
+            <span>Quarter</span><strong>{editingMaintenance.quarter}</strong>
+            <span>Plot number</span><strong>{editingMaintenance.plotNumber || '—'}</strong>
+            <span>Maintenance amount</span><strong>{money(editingMaintenance.paymentAmount ?? editingMaintenance.amount)}</strong>
+            <span>Status</span><strong><StatusPill status={editingMaintenance.status} /></strong>
+          </div>
+          {editingMaintenance.evidenceFile && <div className="maintenance-existing-evidence">
+            <strong>Previous evidence</strong>
+            <EvidencePreview filename={editingMaintenance.evidenceFile} name={editingMaintenance.evidenceName} />
+          </div>}
+          {['owner', 'admin'].includes(role) && ['Pending', 'Rejected'].includes(editingMaintenance.status)
+            ? <form className="record-form maintenance-submission-form" onSubmit={submitMaintenanceDetails}>
+              <p className="form-intro">{editingMaintenance.status === 'Rejected' ? 'Update your payment details and attach evidence to resubmit.' : 'Enter your payment details and attach evidence for Admin review.'}</p>
+              <div className="form-grid">
+                <label>Payment date<input name="paymentDate" type="date" defaultValue={editingMaintenance.paymentDate || new Date().toISOString().slice(0, 10)} required /></label>
+                <label>Paid amount ({CURRENCY})<input name="paidAmount" type="number" min="0.01" step="0.01" max={Number(editingMaintenance.paymentAmount ?? editingMaintenance.amount)} defaultValue={Number(editingMaintenance.paymentAmount ?? editingMaintenance.amount)} required /></label>
+              </div>
+              <label>Payment method<select name="paymentMethod" defaultValue={editingMaintenance.paymentMethod || ''} required><option value="" disabled>Select method</option><option>UPI</option><option>Bank transfer</option><option>Cash</option><option>Other</option></select></label>
+              <label>Transaction reference<input name="reference" maxLength="120" defaultValue={editingMaintenance.reference || ''} placeholder="Optional reference number" /></label>
+              <label>Remarks<textarea name="remarks" rows="2" maxLength="500" defaultValue={editingMaintenance.remarks || ''} placeholder="Optional note for Admin" /></label>
+              <label>Payment evidence<input ref={evidenceInputRef} name="evidence" type="file" accept=".jpg,.jpeg,.png,.pdf,.webp,image/jpeg,image/png,application/pdf,image/webp" required onChange={(event) => setSelectedEvidence(event.target.files?.[0] || null)} /></label>
+              {selectedEvidence && <EvidenceFilePreview file={selectedEvidence} onRemove={() => {
+                setSelectedEvidence(null);
+                if (evidenceInputRef.current) evidenceInputRef.current.value = '';
+              }} />}
+              <div className="evidence-hint">JPG, PNG, or WebP up to 4 MB; PDF up to 10 MB. Paid amount must cover the full maintenance amount.</div>
+              <div className="form-footer"><span><ShieldCheck size={15} /> Evidence is private to you and Admin</span><button className="button button-primary" disabled={busy}><Paperclip size={15} /> Submit Evidence</button></div>
+            </form>
+            : <p className={`maintenance-review-note ${editingMaintenance.status === 'Pending Approval' ? 'waiting' : ''}`}>
+              {editingMaintenance.status === 'Pending Approval'
+                ? 'Your evidence is awaiting Admin approval. Duplicate submissions are disabled.'
+                : 'This payment is read-only. Only pending or rejected records can be submitted.'}
+            </p>}
+        </div>
+      </Modal>}
       {selectedOwner && <Modal title="Owner details" onClose={() => setSelectedOwner(null)}><OwnerDetail owner={selectedOwner} maintenance={(data.maintenance || []).filter((payment) => payment.ownerId === selectedOwner.id)} viewOnly={role === 'owner'} onEdit={() => { setEditingOwner(selectedOwner); setSelectedOwner(null); setModal('owner'); }} onDelete={deleteOwner} /></Modal>}
       {selectedExpense && <Modal title="Expense request" onClose={() => setSelectedExpense(null)}><ExpenseDetail expense={selectedExpense} canReview={role === 'admin'} onUpdate={updateExpenseStatus} onPay={role === 'admin' ? () => updateExpenseStatus(selectedExpense, 'Paid') : null} onDelete={deleteExpense} busy={busy} /></Modal>}
     </div>
@@ -968,7 +1011,7 @@ function QuarterlyManagementPage({ owners, financialYears, selectedFinancialYear
 }
 
 function maintenancePaidAmount(payment) {
-  return isMaintenanceCollected(payment) ? Number(payment.paymentAmount ?? payment.amount ?? 0) : 0;
+  return isMaintenanceCollected(payment) ? Number(payment.paidAmount ?? payment.paymentAmount ?? payment.amount ?? 0) : 0;
 }
 
 function maintenanceBalance(payment) {
@@ -976,20 +1019,23 @@ function maintenanceBalance(payment) {
   return Math.max(0, amount - maintenancePaidAmount(payment));
 }
 
-function MyMaintenancePage({ payments, selectedFinancialYear, setSelectedFinancialYear }) {
-  const [scopedPayments, setScopedPayments] = useState(payments);
-  useEffect(() => {
-    let active = true;
-    request('getMyMaintenance', { financialYear: selectedFinancialYear })
-      .then((result) => { if (active) setScopedPayments(result.maintenance || []); })
-      .catch(() => { if (active) setScopedPayments([]); });
-    return () => { active = false; };
-  }, [selectedFinancialYear]);
+function MyMaintenancePage({ payments, loading, onEditPayment }) {
+  const [financialYearFilter, setFinancialYearFilter] = useState('All');
   const [quarterFilter, setQuarterFilter] = useState('All quarters');
   const [statusFilter, setStatusFilter] = useState('All');
-  const visible = scopedPayments.filter((payment) =>
+  const yearFor = (payment) => payment.financialYear
+    || String(payment.title || '').match(/FY ([0-9]{4}-[0-9]{2})/)?.[1]
+    || 'Unassigned';
+  const financialYears = [...new Set(payments.map(yearFor))].sort((a, b) => {
+    if (a === 'Unassigned') return 1;
+    if (b === 'Unassigned') return -1;
+    return Number(b.slice(0, 4)) - Number(a.slice(0, 4));
+  });
+  const visible = payments.filter((payment) =>
+    (financialYearFilter === 'All' || yearFor(payment) === financialYearFilter)
+    &&
     (quarterFilter === 'All quarters' || payment.quarter === quarterFilter)
-    && (statusFilter === 'All' || (statusFilter === 'Paid' ? isMaintenanceCollected(payment) : ['Pending', 'Pending Approval'].includes(payment.status))));
+    && (statusFilter === 'All' || payment.status === statusFilter));
   const total = visible.reduce((sum, payment) => sum + Number(payment.paymentAmount ?? payment.amount ?? 0), 0);
   const paid = visible.reduce((sum, payment) => sum + maintenancePaidAmount(payment), 0);
   const pending = Math.max(0, total - paid);
@@ -998,32 +1044,41 @@ function MyMaintenancePage({ payments, selectedFinancialYear, setSelectedFinanci
     <PageHeading eyebrow="PERSONAL PAYMENTS" title="My Maintenance" description="View only your own quarterly maintenance payment records." />
     <div className="payment-summary"><div><span>TOTAL MAINTENANCE</span><strong>{money(total)}</strong></div><div><span>TOTAL PAID</span><strong>{money(paid)}</strong></div><div><span>TOTAL PENDING</span><strong>{money(pending)}</strong></div></div>
     <ListToolbar query="" setQuery={() => {}} placeholder="Search records...">
-      <FinancialYearSelect value={selectedFinancialYear} onChange={setSelectedFinancialYear} />
+      <label className="financial-year-control"><span>Financial year</span><select className="select-compact" aria-label="Filter by financial year" value={financialYearFilter} onChange={(event) => setFinancialYearFilter(event.target.value)}><option value="All">All financial years</option>{financialYears.map((year) => <option key={year} value={year}>{year === 'Unassigned' ? year : `FY ${year}`}</option>)}</select></label>
       <select className="select-compact" aria-label="Filter by quarter" value={quarterFilter} onChange={(event) => setQuarterFilter(event.target.value)}>{['All quarters', ...QUARTERS].map((item) => <option key={item}>{item}</option>)}</select>
-      <select className="select-compact" aria-label="Filter by payment status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>{['All', 'Pending', 'Paid'].map((item) => <option key={item}>{item}</option>)}</select>
+      <select className="select-compact" aria-label="Filter by payment status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>{['All', 'Pending', 'Pending Approval', 'Rejected', 'Paid', 'Approved'].map((item) => <option key={item}>{item}</option>)}</select>
     </ListToolbar>
     <div className="panel listing-panel"><div className="table-wrap"><table className="data-table">
       <thead><tr><th>FINANCIAL YEAR</th><th>QUARTER</th><th>MAINTENANCE</th><th>PAID</th><th>BALANCE</th><th>STATUS</th><th>PAYMENT DATE</th></tr></thead>
-      <tbody>{visible.map((payment) => <tr key={payment.id}><td>{payment.financialYear || (String(payment.title || '').match(/FY ([0-9]{4}-[0-9]{2})/)?.[1] || 'Unassigned')}</td><td><span className="quarter-badge">{payment.quarter}</span></td><td className="amount-cell">{money(payment.paymentAmount ?? payment.amount)}</td><td className="amount-cell">{money(maintenancePaidAmount(payment))}</td><td className="amount-cell">{money(maintenanceBalance(payment))}</td><td><StatusPill status={payment.status} /></td><td>{shortDate(payment.paymentDate)}</td></tr>)}</tbody>
-    </table>{visible.length === 0 && <EmptyState text="No maintenance records match these filters." />}</div></div>
+      <tbody>{visible.map((payment) => {
+        const editable = Boolean(onEditPayment) && ['Pending', 'Rejected'].includes(payment.status);
+        const openPayment = () => { if (editable) onEditPayment(payment); };
+        return <tr key={payment.id} className={editable ? 'maintenance-editable-row' : ''} tabIndex={editable ? 0 : undefined} aria-label={editable ? `Submit evidence for ${payment.quarter} maintenance payment` : undefined} onClick={openPayment} onKeyDown={(event) => {
+          if (editable && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault();
+            openPayment();
+          }
+        }}>
+          <td>{yearFor(payment)}</td>
+          <td><span className="quarter-badge">{payment.quarter}</span></td>
+          <td className="amount-cell">{money(payment.paymentAmount ?? payment.amount)}</td>
+          <td className="amount-cell">{money(isMaintenanceCollected(payment) ? payment.paidAmount ?? payment.paymentAmount ?? payment.amount : 0)}</td>
+          <td className="amount-cell">{money(maintenanceBalance(payment))}</td>
+          <td><StatusPill status={payment.status} /></td>
+          <td>{shortDate(payment.paymentDate)}</td>
+        </tr>;
+      })}</tbody>
+    </table>{visible.length === 0 && <EmptyState text={loading ? 'Loading your maintenance records...' : 'No maintenance records match these filters.'} />}</div></div>
   </>;
 }
 
-function OwnersMaintenancePage({ payments, owners, selectedFinancialYear, setSelectedFinancialYear, onUpdateStatus, onDelete }) {
-  const [scopedPayments, setScopedPayments] = useState(payments);
-  useEffect(() => {
-    let active = true;
-    request('getOwnersMaintenance', { financialYear: selectedFinancialYear })
-      .then((result) => { if (active) setScopedPayments(result.maintenance || []); })
-      .catch(() => { if (active) setScopedPayments([]); });
-    return () => { active = false; };
-  }, [selectedFinancialYear]);
+function OwnersMaintenancePage({ payments, owners, selectedFinancialYear, setSelectedFinancialYear, onUpdateStatus, onDelete, busy, currentOwnerId }) {
   const [ownerFilter, setOwnerFilter] = useState('All owners');
   const [phaseFilter, setPhaseFilter] = useState('All phases');
   const [quarterFilter, setQuarterFilter] = useState('All quarters');
   const [statusFilter, setStatusFilter] = useState('All');
-  const ownerName = (ownerId) => owners.find((owner) => String(owner.id) === String(ownerId))?.name || scopedPayments.find((payment) => String(payment.ownerId) === String(ownerId))?.ownerName || '—';
-  const visible = scopedPayments.filter((payment) =>
+  const ownerName = (ownerId) => owners.find((owner) => String(owner.id) === String(ownerId))?.name || payments.find((payment) => String(payment.ownerId) === String(ownerId))?.ownerName || '—';
+  const visible = payments.filter((payment) =>
     (ownerFilter === 'All owners' || ownerName(payment.ownerId) === ownerFilter)
     && (phaseFilter === 'All phases' || String(payment.phaseNumber) === phaseFilter.replace('Phase ', ''))
     && (quarterFilter === 'All quarters' || payment.quarter === quarterFilter)
@@ -1042,8 +1097,30 @@ function OwnersMaintenancePage({ payments, owners, selectedFinancialYear, setSel
       <select className="select-compact" aria-label="Filter by quarter" value={quarterFilter} onChange={(event) => setQuarterFilter(event.target.value)}>{['All quarters', ...QUARTERS].map((item) => <option key={item}>{item}</option>)}</select>
       <select className="select-compact" aria-label="Filter by payment status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>{['All', ...STATUSES].map((item) => <option key={item}>{item}</option>)}</select>
     </ListToolbar>
-    <div className="panel listing-panel"><div className="table-wrap"><table className="data-table"><thead><tr><th>OWNER</th><th>OWNER ID</th><th>PHASE</th><th>PLOT</th><th>FINANCIAL YEAR</th><th>QUARTER</th><th>MAINTENANCE</th><th>PAID</th><th>BALANCE</th><th>STATUS</th><th>ACTIONS</th></tr></thead>
-      <tbody>{visible.map((payment) => <tr key={payment.id}><td><strong>{ownerName(payment.ownerId)}</strong></td><td className="mono-cell">{payment.ownerId}</td><td>Phase {payment.phaseNumber}</td><td>{payment.plotNumber || '—'}</td><td>{payment.financialYear || (String(payment.title || '').match(/FY ([0-9]{4}-[0-9]{2})/)?.[1] || 'Unassigned')}</td><td><span className="quarter-badge">{payment.quarter}</span></td><td className="amount-cell">{money(payment.paymentAmount ?? payment.amount)}</td><td className="amount-cell">{money(maintenancePaidAmount(payment))}</td><td className="amount-cell">{money(maintenanceBalance(payment))}</td><td><select className="status-select" aria-label={`Set ${ownerName(payment.ownerId)} ${payment.quarter} status`} value={payment.status} onChange={(event) => onUpdateStatus(payment, event.target.value)}>{STATUSES.map((status) => <option key={status}>{status}</option>)}</select></td><td><button className="icon-button row-delete" type="button" title="Delete maintenance record" aria-label={`Delete ${ownerName(payment.ownerId)} ${payment.quarter}`} onClick={() => onDelete(payment)}><Trash2 size={15} /></button></td></tr>)}</tbody>
+    <div className="panel listing-panel"><div className="table-wrap"><table className="data-table"><thead><tr><th>OWNER</th><th>OWNER ID</th><th>PHASE</th><th>PLOT</th><th>FINANCIAL YEAR</th><th>QUARTER</th><th>MAINTENANCE</th><th>PAID</th><th>PAYMENT DETAILS</th><th>EVIDENCE</th><th>STATUS</th><th>ACTIONS</th></tr></thead>
+      <tbody>{visible.map((payment) => {
+        const isOwnPayment = String(payment.ownerId) === String(currentOwnerId);
+        return <tr key={payment.id}>
+        <td><strong>{ownerName(payment.ownerId)}</strong></td>
+        <td className="mono-cell">{payment.ownerId}</td>
+        <td>Phase {payment.phaseNumber}</td>
+        <td>{payment.plotNumber || '—'}</td>
+        <td>{payment.financialYear || (String(payment.title || '').match(/FY ([0-9]{4}-[0-9]{2})/)?.[1] || 'Unassigned')}</td>
+        <td><span className="quarter-badge">{payment.quarter}</span></td>
+        <td className="amount-cell">{money(payment.paymentAmount ?? payment.amount)}</td>
+        <td className="amount-cell">{payment.paidAmount ? money(payment.paidAmount) : '—'}</td>
+        <td><span className="contact-cell">{payment.paymentDate ? shortDate(payment.paymentDate) : '—'}<small>{[payment.paymentMethod, payment.reference].filter(Boolean).join(' · ') || 'No details submitted'}</small>{payment.remarks && <small>{payment.remarks}</small>}</span></td>
+        <td>{payment.evidenceFile ? <EvidencePreview filename={payment.evidenceFile} name={payment.evidenceName} /> : '—'}</td>
+        <td><StatusPill status={payment.status} /></td>
+        <td><div className="maintenance-admin-actions">
+          {payment.status === 'Pending Approval' && <>
+            <button type="button" className="button button-quiet button-compact" title={isOwnPayment ? 'You cannot approve your own payment' : 'Approve payment'} disabled={busy || !payment.evidenceFile || isOwnPayment} onClick={() => onUpdateStatus(payment, 'Paid')}><Check size={14} /> Approve</button>
+            <button type="button" className="button button-quiet button-compact button-reject" title={isOwnPayment ? 'You cannot reject your own payment' : 'Reject payment'} disabled={busy || isOwnPayment} onClick={() => onUpdateStatus(payment, 'Rejected')}><X size={14} /> Reject</button>
+          </>}
+          <button className="icon-button row-delete" type="button" title="Delete maintenance record" aria-label={`Delete ${ownerName(payment.ownerId)} ${payment.quarter}`} disabled={busy} onClick={() => onDelete(payment)}><Trash2 size={15} /></button>
+        </div></td>
+      </tr>;
+      })}</tbody>
     </table>{visible.length === 0 && <EmptyState text="No maintenance records match these filters." />}</div></div>
   </>;
 }
@@ -1087,14 +1164,33 @@ function MaintenancePage({ payments, query, setQuery, role, selfOwnerId, selecte
   </>;
 }
 
-function EvidencePreview({ filename }) {
-  const [imageUrl, setImageUrl] = useState('');
-
-  if (typeof filename === 'string' && filename.startsWith('data:image/')) {
-    return <a className="attachment-link" href={filename} target="_blank" rel="noreferrer">View evidence</a>;
-  }
-
+function EvidenceFilePreview({ file, onRemove }) {
+  const [previewUrl, setPreviewUrl] = useState('');
   useEffect(() => {
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+  return <div className="evidence-upload-preview">
+    {file.type.startsWith('image/') && previewUrl
+      ? <img src={previewUrl} alt={`Preview of ${file.name}`} />
+      : <FileText size={22} aria-hidden="true" />}
+    <span><strong>{file.name}</strong><small>{(file.size / 1024).toFixed(1)} KB · {file.type === 'application/pdf' ? 'PDF' : 'Image'}</small></span>
+    <div>
+      {previewUrl && <a className="button button-quiet button-compact" href={previewUrl} target="_blank" rel="noreferrer">Preview</a>}
+      <button className="button button-quiet button-compact button-reject" type="button" onClick={onRemove}><X size={13} /> Remove</button>
+    </div>
+  </div>;
+}
+
+function EvidencePreview({ filename, name }) {
+  const [evidenceUrl, setEvidenceUrl] = useState('');
+  const dataUrl = typeof filename === 'string' && filename.startsWith('data:image/');
+  useEffect(() => {
+    if (!filename || dataUrl) {
+      setEvidenceUrl('');
+      return undefined;
+    }
     let active = true;
     let objectUrl = '';
     const session = readSession();
@@ -1106,20 +1202,25 @@ function EvidencePreview({ filename }) {
       return response.blob();
     }).then((blob) => {
       objectUrl = URL.createObjectURL(blob);
-      if (active) setImageUrl(objectUrl);
+      if (active) setEvidenceUrl(objectUrl);
       else URL.revokeObjectURL(objectUrl);
     }).catch(() => {
-      if (active) setImageUrl('');
+      if (active) setEvidenceUrl('');
     });
     return () => {
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [filename]);
-
-  return imageUrl
-    ? <a className="attachment-link" href={imageUrl} target="_blank" rel="noreferrer">View evidence</a>
-    : <span className="evidence-hint">Loading evidence...</span>;
+  }, [filename, dataUrl]);
+  const fileUrl = dataUrl ? filename : evidenceUrl;
+  const dataExtension = typeof filename === 'string' ? filename.match(/^data:image\/(jpeg|png|webp);/i)?.[1] : '';
+  const fileExtension = typeof filename === 'string' ? filename.match(/\.(pdf|jpg|jpeg|png|webp)$/i)?.[1] : '';
+  const displayName = name || `payment-evidence.${(dataExtension || fileExtension || 'pdf').replace(/jpeg$/i, 'jpg')}`;
+  if (!fileUrl) return <span className="evidence-hint">Loading evidence...</span>;
+  return <span className="evidence-preview">
+    <a className="attachment-link" href={fileUrl} target="_blank" rel="noreferrer">{name || 'View evidence'}</a>
+    <a className="evidence-download" href={fileUrl} download={displayName} aria-label={`Download ${displayName}`}><Download size={14} /></a>
+  </span>;
 }
 
 function OwnersPage({ owners, query, setQuery, canManage, onNew, onImport, onView, onDelete }) {

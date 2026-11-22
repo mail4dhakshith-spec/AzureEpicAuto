@@ -8,7 +8,7 @@ import { ExcelTreasuryRepository } from './excelRepository.js';
 import { createGoogleDrive } from './googleDrive.js';
 import { GoogleDriveExcelRepository } from './googleDriveExcelRepository.js';
 import { createSessionToken, verifyPassword, verifySessionToken } from './auth.js';
-import { isEvidenceDataUri, isEvidenceFilename, readPaymentEvidence, removePaymentEvidence, storePaymentEvidence } from './paymentEvidence.js';
+import { isEvidenceReference, readPaymentEvidence, removePaymentEvidence, storePaymentEvidence } from './paymentEvidence.js';
 import { isExpenseAttachmentFilename, readExpenseAttachment, removeExpenseAttachment, storeExpenseAttachment } from './expenseAttachments.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -181,22 +181,27 @@ async function authSession(request, response) {
 
 async function servePaymentEvidence(request, response) {
   if (request.method !== 'GET') return sendJson(response, 404, { error: 'Route not found.' });
-  const filename = request.url?.match(/^\/api\/maintenance\/evidence\/([^/?]+)$/)?.[1] || '';
-  if (!isEvidenceFilename(filename) && !isEvidenceDataUri(filename)) return sendJson(response, 404, { error: 'Evidence image not found.' });
+  let filename = '';
+  try {
+    filename = decodeURIComponent(request.url?.match(/^\/api\/maintenance\/evidence\/([^/?]+)$/)?.[1] || '');
+  } catch {
+    return sendJson(response, 404, { error: 'Evidence file not found.' });
+  }
+  if (!isEvidenceReference(filename)) return sendJson(response, 404, { error: 'Evidence file not found.' });
   try {
     const user = await verifyUser(request);
-    if (!await repository.canAccessMaintenanceEvidence(filename, user)) return sendJson(response, 404, { error: 'Evidence image not found.' });
-    const image = await readPaymentEvidence(filename, evidenceDirectory);
-    const mediaType = filename.endsWith('.jpg') ? 'image/jpeg' : filename.endsWith('.png') ? 'image/png' : 'image/webp';
+    if (!await repository.canAccessMaintenanceEvidence(filename, user)) return sendJson(response, 404, { error: 'Evidence file not found.' });
+    const evidence = await readPaymentEvidence(filename, evidenceDirectory, drive);
     response.writeHead(200, {
-      'Content-Type': mediaType,
-      'Content-Length': image.length,
+      'Content-Type': evidence.mediaType,
+      'Content-Length': evidence.buffer.length,
+      'Content-Disposition': `inline; filename="${path.basename(evidence.filename || 'payment-evidence')}"`,
       'Cache-Control': 'private, no-store',
       'X-Content-Type-Options': 'nosniff',
     });
-    return response.end(image);
+    return response.end(evidence.buffer);
   } catch (error) {
-    return sendJson(response, error.status || 404, { error: error.status ? error.message : 'Evidence image not found.' });
+    return sendJson(response, error.status || 404, { error: error.status ? error.message : 'Evidence file not found.' });
   }
 }
 
@@ -308,7 +313,7 @@ async function api(request, response) {
       case 'deleteOwner':
         requireAdmin(user);
         result = await repository.deleteOwner(body.id);
-        await Promise.all(result.deletedEvidenceFiles.map((filename) => removePaymentEvidence(filename, evidenceDirectory)));
+        await Promise.all(result.deletedEvidenceFiles.map((filename) => removePaymentEvidence(filename, evidenceDirectory, drive)));
         await Promise.all(result.deletedExpenseFiles.map((filename) => removeExpenseAttachment(filename, expenseAttachmentDirectory)));
         delete result.deletedEvidenceFiles;
         delete result.deletedExpenseFiles;
@@ -347,20 +352,48 @@ async function api(request, response) {
         result = await repository.generateQuarterlyMaintenance(body, user);
         break;
       case 'updateOwnerMaintenanceDetails': {
-        if (user.app_metadata.role !== 'owner') {
-          const error = new Error('Owner access is required to submit payment details.');
-          error.status = 403;
-          throw error;
+        const currentPayment = (await repository.getMyMaintenance(user)).find((payment) => (
+          payment.title === String(body.title) && payment.quarter === String(body.quarter)
+        ));
+        if (!currentPayment) throw Object.assign(new Error('Maintenance record not found for this Owner.'), { status: 404 });
+        if (currentPayment.status === 'Pending Approval') {
+          throw Object.assign(new Error('This maintenance payment is awaiting Admin approval. Duplicate submissions are not allowed.'), { status: 409 });
         }
-        const evidenceFile = body.evidence ? await storePaymentEvidence(body.evidence, evidenceDirectory) : '';
+        if (!['Pending', 'Rejected'].includes(currentPayment.status)) {
+          throw Object.assign(new Error('Only pending or rejected maintenance records can be submitted.'), { status: 409 });
+        }
+        const evidenceParentId = drive && body.evidence
+          ? (await drive.files.get({
+            fileId: driveFileId,
+            fields: 'parents',
+            supportsAllDrives: true,
+          })).data?.parents?.[0] || ''
+          : '';
+        const storedEvidence = body.evidence
+          ? await storePaymentEvidence(body.evidence, evidenceDirectory, drive, evidenceParentId)
+          : null;
         try {
-          const update = await repository.updateOwnerMaintenanceDetails({ ...body, evidenceFile }, user);
+          const update = await repository.updateOwnerMaintenanceDetails({
+            ...body,
+            evidenceFile: storedEvidence?.evidenceFile || '',
+            evidenceName: storedEvidence?.evidenceName || '',
+          }, user);
           if (update.previousEvidenceFile && update.previousEvidenceFile !== update.payment.evidenceFile) {
-            await removePaymentEvidence(update.previousEvidenceFile, evidenceDirectory);
+            try {
+              await removePaymentEvidence(update.previousEvidenceFile, evidenceDirectory, drive);
+            } catch (cleanupError) {
+              console.error('Could not remove replaced maintenance evidence:', cleanupError);
+            }
           }
           result = { payment: update.payment };
         } catch (error) {
-          if (evidenceFile) await removePaymentEvidence(evidenceFile, evidenceDirectory);
+          if (storedEvidence?.evidenceFile) {
+            try {
+              await removePaymentEvidence(storedEvidence.evidenceFile, evidenceDirectory, drive);
+            } catch (cleanupError) {
+              console.error('Could not remove unreferenced maintenance evidence:', cleanupError);
+            }
+          }
           throw error;
         }
         break;
@@ -372,7 +405,7 @@ async function api(request, response) {
       case 'deleteMaintenance':
         requireAdmin(user);
         result = { deletedMaintenance: await repository.deleteMaintenance(body, user) };
-        await removePaymentEvidence(result.deletedMaintenance.evidenceFile, evidenceDirectory);
+        await removePaymentEvidence(result.deletedMaintenance.evidenceFile, evidenceDirectory, drive);
         delete result.deletedMaintenance.evidenceFile;
         break;
       default: {

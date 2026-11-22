@@ -273,12 +273,24 @@ test('separates My Maintenance and Owners Maintenance API scopes', async () => {
   await withRepository(async (repository) => {
     const owner = await repository.createOwner(ownerInput('Scoped Owner', '+15551000024', 'Phase 1', 'A-24'), admin);
     await repository.generateQuarterlyMaintenance({ ownerId: owner.id, phase: 'Phase 1', quarter: 'Q1', financialYear: '2026-27' }, admin);
+    await repository.generateQuarterlyMaintenance({ ownerId: owner.id, phase: 'Phase 1', quarter: 'Q2', financialYear: '2022-23' }, admin);
     const ownerSession = { id: owner.id, app_metadata: { role: 'owner', ownerId: owner.id }, user_metadata: { full_name: owner.name } };
     const mine = await repository.getMyMaintenance(ownerSession, '2026-27');
     assert.equal(mine.length, 1);
     assert.equal(mine[0].ownerId, owner.id);
+    assert.equal((await repository.getMyMaintenance(ownerSession)).length, 2);
     const all = await repository.getOwnersMaintenance('2026-27');
     assert.equal(all.length >= 1, true);
+
+    const adminOwner = await repository.createOwner(ownerInput('Admin Owner', '+15551000034', 'Phase 2', 'B-34'), admin);
+    await repository.transaction((data) => {
+      data.owners.find((item) => item.ownerId === adminOwner.id).role = 'Admin';
+    });
+    await repository.generateQuarterlyMaintenance({ ownerId: adminOwner.id, phase: adminOwner.phase, quarter: 'Q3', financialYear: '2026-27' }, admin);
+    const adminOwnerSession = { id: adminOwner.id, app_metadata: { role: 'admin', ownerId: adminOwner.id } };
+    const adminMine = await repository.getMyMaintenance(adminOwnerSession);
+    assert.equal(adminMine.length, 1);
+    assert.equal(adminMine[0].ownerId, adminOwner.id);
   });
 });
 
@@ -290,31 +302,139 @@ test('allows an Owner to edit their pending payment details with evidence only f
     const payment = generated.created[0];
     const ownerSession = { id: owner.id, phone: owner.phone, app_metadata: { role: 'owner', ownerId: owner.id }, user_metadata: { full_name: owner.name } };
     const evidenceFile = '123e4567-e89b-12d3-a456-426614174000.jpg';
-    await assert.rejects(repository.updateOwnerMaintenanceDetails({ title: payment.title, quarter: payment.quarter, paymentDate: '2026-11-09', paymentMethod: 'UPI' }, ownerSession), /Upload an image/);
+    await assert.rejects(repository.updateOwnerMaintenanceDetails({ title: payment.title, quarter: payment.quarter, paymentDate: '2026-11-09', paymentMethod: 'UPI', paidAmount: 1500 }, ownerSession), /Upload valid JPG, PNG, or PDF/);
     const updated = await repository.updateOwnerMaintenanceDetails({
       title: payment.title,
       quarter: payment.quarter,
       paymentDate: '2026-11-09',
       paymentMethod: 'UPI',
+      paidAmount: 1500,
       reference: 'UPI-00041',
+      remarks: 'Quarterly maintenance payment',
       evidenceFile,
+      evidenceName: 'payment-proof.jpg',
     }, ownerSession);
     assert.equal(updated.payment.evidenceFile, evidenceFile);
+    assert.equal(updated.payment.evidenceName, 'payment-proof.jpg');
     assert.equal(updated.payment.paymentDate, '2026-11-09');
     assert.equal(updated.payment.paymentMethod, 'UPI');
+    assert.equal(updated.payment.paidAmount, 1500);
+    assert.equal(updated.payment.remarks, 'Quarterly maintenance payment');
     assert.equal(updated.payment.status, 'Pending Approval');
+    await assert.rejects(repository.updateOwnerMaintenanceDetails({
+      title: payment.title,
+      quarter: payment.quarter,
+      paymentDate: '2026-11-09',
+      paymentMethod: 'UPI',
+      paidAmount: 1500,
+      evidenceFile,
+    }, ownerSession), /awaiting Admin approval/);
     assert.equal(await repository.canAccessMaintenanceEvidence(evidenceFile, ownerSession), true);
     assert.equal(await repository.canAccessMaintenanceEvidence(evidenceFile, admin), true);
     assert.equal(await repository.canAccessMaintenanceEvidence(evidenceFile, {
       app_metadata: { role: 'owner', ownerId: otherOwner.id },
     }), false);
+    await assert.rejects(repository.updateOwnerMaintenanceDetails({
+      title: payment.title,
+      quarter: payment.quarter,
+      paymentDate: '2026-11-09',
+      paymentMethod: 'UPI',
+      paidAmount: 1500,
+      evidenceFile,
+    }, { app_metadata: { role: 'owner', ownerId: otherOwner.id } }), /not found for this Owner/);
     await repository.updateMaintenanceStatus({ ownerId: owner.id, title: payment.title, quarter: payment.quarter, status: 'Paid' }, admin);
     await assert.rejects(repository.updateOwnerMaintenanceDetails({
       title: payment.title,
       quarter: payment.quarter,
       paymentDate: '2026-11-10',
       paymentMethod: 'UPI',
+      paidAmount: 1500,
+      evidenceFile,
     }, ownerSession), /Only pending/);
+  });
+});
+
+test('allows an owner to resubmit rejected evidence but prevents updates after approval', async () => {
+  await withRepository(async (repository) => {
+    const owner = await repository.createOwner(ownerInput('Nora Kim', '+15551000043', 'Phase 1', 'A-43'), admin);
+    const ownerSession = { id: owner.id, app_metadata: { role: 'owner', ownerId: owner.id } };
+    const [payment] = (await repository.generateQuarterlyMaintenance({
+      ownerId: owner.id, phase: owner.phase, quarter: 'Q2', financialYear: '2026-27',
+    }, admin)).created;
+    const firstEvidence = '123e4567-e89b-12d3-a456-426614174000.jpg';
+    const submission = {
+      title: payment.title,
+      quarter: payment.quarter,
+      paymentDate: '2026-11-10',
+      paymentMethod: 'Bank transfer',
+      paidAmount: 1500,
+      evidenceFile: firstEvidence,
+      evidenceName: 'first-proof.jpg',
+    };
+    await repository.updateOwnerMaintenanceDetails(submission, ownerSession);
+    await repository.updateMaintenanceStatus({
+      ownerId: owner.id, title: payment.title, quarter: payment.quarter, status: 'Rejected',
+    }, admin);
+    const secondEvidence = '123e4567-e89b-12d3-a456-426614174001.pdf';
+    const resubmitted = await repository.updateOwnerMaintenanceDetails({
+      ...submission, evidenceFile: secondEvidence, evidenceName: 'updated-proof.pdf',
+    }, ownerSession);
+    assert.equal(resubmitted.previousEvidenceFile, firstEvidence);
+    assert.equal(resubmitted.payment.status, 'Pending Approval');
+    await repository.updateMaintenanceStatus({
+      ownerId: owner.id, title: payment.title, quarter: payment.quarter, status: 'Paid',
+    }, admin);
+    await assert.rejects(repository.updateOwnerMaintenanceDetails({
+      ...submission, evidenceFile: '123e4567-e89b-12d3-a456-426614174002.jpg',
+    }, ownerSession), /Only pending or rejected/);
+  });
+});
+
+test('allows an Admin to submit only their own maintenance payment and prevents self-approval', async () => {
+  await withRepository(async (repository) => {
+    const adminOwner = await repository.createOwner(ownerInput('Admin Payment Owner', '+15551000044', 'Phase 1', 'A-44'), admin);
+    await repository.transaction((data) => {
+      data.owners.find((item) => item.ownerId === adminOwner.id).role = 'Admin';
+    });
+    const ownerPayment = (await repository.generateQuarterlyMaintenance({
+      ownerId: adminOwner.id,
+      phase: adminOwner.phase,
+      quarter: 'Q1',
+      financialYear: '2026-27',
+    }, admin)).created[0];
+    const otherOwner = await repository.createOwner(ownerInput('Other Payment Owner', '+15551000045', 'Phase 2', 'B-45'), admin);
+    const otherPayment = (await repository.generateQuarterlyMaintenance({
+      ownerId: otherOwner.id,
+      phase: otherOwner.phase,
+      quarter: 'Q2',
+      financialYear: '2026-27',
+    }, admin)).created[0];
+    const adminOwnerSession = {
+      id: adminOwner.id,
+      app_metadata: { role: 'admin', ownerId: adminOwner.id },
+    };
+    const submission = {
+      title: ownerPayment.title,
+      quarter: ownerPayment.quarter,
+      paymentDate: '2026-11-10',
+      paymentMethod: 'UPI',
+      paidAmount: 1500,
+      evidenceFile: '123e4567-e89b-12d3-a456-426614174003.jpg',
+      evidenceName: 'admin-payment-proof.jpg',
+    };
+    const updated = await repository.updateOwnerMaintenanceDetails(submission, adminOwnerSession);
+    assert.equal(updated.payment.status, 'Pending Approval');
+    await assert.rejects(repository.updateOwnerMaintenanceDetails({
+      ...submission,
+      title: otherPayment.title,
+      quarter: otherPayment.quarter,
+    }, adminOwnerSession), /not found for this Owner/);
+    await assert.rejects(repository.updateMaintenanceStatus({
+      ownerId: adminOwner.id,
+      title: ownerPayment.title,
+      quarter: ownerPayment.quarter,
+      status: 'Paid',
+    }, adminOwnerSession), /cannot approve or reject your own/);
   });
 });
 
@@ -404,6 +524,8 @@ test('adds Owner payment detail columns to existing Maintenance sheets without l
     assert.equal(migratedPayment.paymentAmount, 1500);
     assert.equal(migratedPayment.paymentDate, '');
     assert.equal(migratedPayment.evidenceFile, '');
+    assert.equal(migratedPayment.paidAmount, '');
+    assert.equal(migratedPayment.remarks, '');
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -435,6 +557,10 @@ test('preserves maintenance evidence names and references in the current workboo
     assert.equal(payment.evidenceName, 'payment-proof.jpg');
     assert.equal(payment.evidenceFile, 'data:image/jpeg;base64,/9j/2Q==');
     assert.equal(payment.financialYear, '2026-27');
+    assert.equal(payment.paidAmount, '');
+    assert.equal(payment.remarks, '');
+    const workbook = await readExcelFile(filePath);
+    assert.deepEqual(workbook.find((sheet) => sheet.sheet === SHEETS.maintenance.name).data[0], SHEETS.maintenance.headers);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

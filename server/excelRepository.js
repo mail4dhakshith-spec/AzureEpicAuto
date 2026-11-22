@@ -1,12 +1,13 @@
 import { access, mkdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { isExpenseAttachmentFilename } from './expenseAttachments.js';
+import { isEvidenceDataUri, isEvidenceFilename, isDriveEvidenceReference } from './paymentEvidence.js';
 import readExcelFile from 'read-excel-file/node';
 import writeExcelFile from 'write-excel-file/node';
 
 export const QUARTERLY_MAINTENANCE_AMOUNT = 1500;
 export const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4'];
-export const STATUSES = ['Pending', 'Pending Approval', 'Approved', 'Paid'];
+export const STATUSES = ['Pending', 'Pending Approval', 'Approved', 'Rejected', 'Paid'];
 export const EXPENSE_TYPES = ['Phase 1 Park', 'Phase 2 Park', 'Road', 'Phase 3 Park', 'Mandabam', 'EB Work', 'Security Payment'];
 
 export const SHEETS = {
@@ -22,8 +23,8 @@ export const SHEETS = {
   },
   maintenance: {
     name: 'Maintenance Payment Details',
-    headers: ['Owner ID', 'Owner Name', 'Title', 'Quarter', 'Plot Number', 'Phase Number', 'Payment Amount', 'Status', 'Created Date', 'Created By', 'Payment Date', 'Payment Method', 'Reference', 'Evidence Name', 'Evidence File', 'Financial Year'],
-    fields: ['ownerId', 'ownerName', 'title', 'quarter', 'plotNumber', 'phaseNumber', 'paymentAmount', 'status', 'createdDate', 'createdBy', 'paymentDate', 'paymentMethod', 'reference', 'evidenceName', 'evidenceFile', 'financialYear'],
+    headers: ['Owner ID', 'Owner Name', 'Title', 'Quarter', 'Plot Number', 'Phase Number', 'Payment Amount', 'Status', 'Created Date', 'Created By', 'Payment Date', 'Payment Method', 'Reference', 'Evidence Name', 'Evidence File', 'Financial Year', 'Paid Amount', 'Remarks'],
+    fields: ['ownerId', 'ownerName', 'title', 'quarter', 'plotNumber', 'phaseNumber', 'paymentAmount', 'status', 'createdDate', 'createdBy', 'paymentDate', 'paymentMethod', 'reference', 'evidenceName', 'evidenceFile', 'financialYear', 'paidAmount', 'remarks'],
   },
   income: {
     name: 'Income Details',
@@ -67,6 +68,17 @@ function financialYearFromDate(value) {
   return `${year}-${String(year + 1).slice(-2)}`;
 }
 
+function maintenanceFinancialYear(record) {
+  const financialYear = String(record.financialYear || '').trim();
+  if (financialYear) return financialYear;
+  const titleFinancialYear = String(record.title || '').match(/FY\s+(\d{4}-\d{2})/i)?.[1];
+  return titleFinancialYear || financialYearFromDate(record.paymentDate || record.createdDate);
+}
+
+function maintenanceMatchesFinancialYear(record, selectedFinancialYear) {
+  return !selectedFinancialYear || maintenanceFinancialYear(record) === selectedFinancialYear;
+}
+
 function actorName(user) {
   return clean(user.user_metadata?.full_name || user.user_metadata?.name || user.phone || user.id, 100);
 }
@@ -103,14 +115,16 @@ function cellsToRecords(definition, rows) {
   const headersWithoutPasswordOrRole = ownerSheet ? ownerHeadersForLegacyVariant.filter((header) => !['Password', 'Role'].includes(header)) : [];
   const priorUsernameHeadersWithoutRole = headersWithoutPasswordOrRole.map((header) => header === 'User Name' ? 'Username' : header);
   const legacyMaintenanceHeaders = maintenanceSheet ? definition.headers.slice(0, 10) : [];
-  const maintenanceHeadersWithoutFinancialYear = maintenanceSheet ? definition.headers.slice(0, -1) : [];
+  const maintenanceHeadersWithoutPaymentDetails = maintenanceSheet ? definition.headers.slice(0, -2) : [];
+  const maintenanceHeadersWithPaidAmount = maintenanceSheet ? definition.headers.slice(0, -1) : [];
+  const maintenanceHeadersWithoutFinancialYear = maintenanceSheet ? definition.headers.slice(0, 15) : [];
   const legacyExpenseHeaders = expenseSheet ? definition.headers.slice(0, 8) : [];
   const expenseHeadersWithAttachments = expenseSheet ? definition.headers.slice(0, 10) : [];
   const expenseHeadersCurrent = expenseSheet ? definition.headers.slice(0, 11) : [];
   const expenseHeadersWithEvidence = expenseSheet ? definition.headers.slice(0, -1) : [];
   const incomeSheet = definition.name === 'Income Details';
   const legacyIncomeHeaders = incomeSheet ? definition.headers.slice(0, 12) : [];
-  const headerVariants = ownerSheet ? [ownerHeadersForLegacyVariant, legacyHeaders, headersWithoutPassword, priorUsernameHeaders, headersWithoutRole, headersWithoutPasswordOrRole, priorUsernameHeadersWithoutRole] : maintenanceSheet ? [legacyMaintenanceHeaders, maintenanceHeadersWithoutFinancialYear] : expenseSheet ? [legacyExpenseHeaders, expenseHeadersWithAttachments, expenseHeadersCurrent, expenseHeadersWithEvidence] : incomeSheet ? [legacyIncomeHeaders] : [];
+  const headerVariants = ownerSheet ? [ownerHeadersForLegacyVariant, legacyHeaders, headersWithoutPassword, priorUsernameHeaders, headersWithoutRole, headersWithoutPasswordOrRole, priorUsernameHeadersWithoutRole] : maintenanceSheet ? [legacyMaintenanceHeaders, maintenanceHeadersWithoutFinancialYear, maintenanceHeadersWithoutPaymentDetails, maintenanceHeadersWithPaidAmount] : expenseSheet ? [legacyExpenseHeaders, expenseHeadersWithAttachments, expenseHeadersCurrent, expenseHeadersWithEvidence] : incomeSheet ? [legacyIncomeHeaders] : [];
   const matchingHeaders = headerVariants.find((headers) => headers.length === actualHeaders.length && headers.every((header, index) => actualHeaders[index] === header));
   const expectedHeaders = matchingHeaders || definition.headers;
   const fields = matchingHeaders ? expectedHeaders.map((header) => definition.headers.indexOf(header === 'Username' ? 'User Name' : header)).map((index) => definition.fields[index]) : definition.fields;
@@ -150,7 +164,7 @@ function publicMaintenance(record) {
     amount: Number(record.paymentAmount) || 0,
     date: record.createdDate,
     method: 'Maintenance',
-    reference: record.reference || record.title,
+    reference: record.reference || '',
     evidenceFile: record.evidenceFile || '',
   };
 }
@@ -196,7 +210,10 @@ export class ExcelTreasuryRepository {
         expense.financialYear = String(expense.financialYear || '').trim() || financialYearFromDate(expense.createdDate);
       }
       for (const payment of data.maintenance) {
-        payment.financialYear = String(payment.financialYear || '').trim() || financialYearFromDate(payment.paymentDate || payment.createdDate);
+        payment.financialYear = maintenanceFinancialYear(payment);
+        payment.evidenceName = String(payment.evidenceName || '').trim();
+        payment.paidAmount = payment.paidAmount ?? '';
+        payment.remarks = String(payment.remarks || '').trim();
       }
       for (const income of data.income || []) {
         income.evidenceName = String(income.evidenceName || '').trim();
@@ -275,9 +292,7 @@ export class ExcelTreasuryRepository {
   async getData(user, selectedFinancialYear = '') {
     const data = await this.read();
     const memberOwners = data.owners;
-    const filteredMaintenance = selectedFinancialYear
-      ? data.maintenance.filter((item) => String(item.financialYear || '').trim() === selectedFinancialYear || String(item.title || '').includes(selectedFinancialYear))
-      : data.maintenance;
+    const filteredMaintenance = data.maintenance.filter((item) => maintenanceMatchesFinancialYear(item, selectedFinancialYear));
     const filteredExpenses = selectedFinancialYear
       ? data.expenses.filter((item) => String(item.financialYear || '').trim() === selectedFinancialYear || (!item.financialYear && financialYearFromDate(item.createdDate || item.submittedAt) === selectedFinancialYear))
       : data.expenses;
@@ -300,7 +315,7 @@ export class ExcelTreasuryRepository {
     const ownerId = String(user.app_metadata.ownerId || '');
     const ownRecord = memberOwners.find((owner) => String(owner.ownerId) === ownerId);
     if (!ownRecord) throw new Error('No Owner Details row is linked to this account.');
-    const maintenance = data.maintenance.filter((item) => String(item.ownerId) === ownerId && (!selectedFinancialYear || String(item.financialYear || '').trim() === selectedFinancialYear || String(item.title || '').includes(selectedFinancialYear) || financialYearFromDate(item.createdDate || item.paymentDate) === selectedFinancialYear));
+    const maintenance = data.maintenance.filter((item) => String(item.ownerId) === ownerId && maintenanceMatchesFinancialYear(item, selectedFinancialYear));
     const clientData = this.toClientData({ owners: memberOwners, expenses: [], maintenance });
     return {
       ...clientData,
@@ -509,18 +524,13 @@ export class ExcelTreasuryRepository {
     if (!ownerId) throw Object.assign(new Error('No Owner ID is linked to this account.'), { status: 403 });
     const data = await this.read();
     const maintenance = data.maintenance.filter((item) => String(item.ownerId) === ownerId
-      && (!selectedFinancialYear || String(item.financialYear || '').trim() === selectedFinancialYear
-        || String(item.title || '').includes(selectedFinancialYear)
-        || financialYearFromDate(item.createdDate || item.paymentDate) === selectedFinancialYear));
+      && maintenanceMatchesFinancialYear(item, selectedFinancialYear));
     return maintenance.map(publicMaintenance);
   }
 
   async getOwnersMaintenance(selectedFinancialYear = '') {
     const data = await this.read();
-    const maintenance = data.maintenance.filter((item) => !selectedFinancialYear
-      || String(item.financialYear || '').trim() === selectedFinancialYear
-      || String(item.title || '').includes(selectedFinancialYear)
-      || financialYearFromDate(item.createdDate || item.paymentDate) === selectedFinancialYear);
+    const maintenance = data.maintenance.filter((item) => maintenanceMatchesFinancialYear(item, selectedFinancialYear));
     return maintenance.map(publicMaintenance);
   }
 
@@ -730,6 +740,8 @@ export class ExcelTreasuryRepository {
           evidenceName: '',
           evidenceFile: '',
           financialYear: fy,
+          paidAmount: '',
+          remarks: '',
         };
         data.maintenance.push(record);
         created.push(publicMaintenance(record));
@@ -741,34 +753,50 @@ export class ExcelTreasuryRepository {
   async updateMaintenanceStatus({ ownerId, title, quarter, status }, user) {
     this.requireAdmin(user);
     return this.transaction((data) => {
-      if (!STATUSES.includes(status)) throw new Error('Choose Pending, Pending Approval, Approved, or Paid.');
+      if (!STATUSES.includes(status)) throw new Error('Choose Pending, Pending Approval, Approved, Rejected, or Paid.');
       const record = data.maintenance.find((item) => item.ownerId === String(ownerId) && item.title === String(title) && item.quarter === String(quarter));
       if (!record) throw new Error('Maintenance record not found.');
+      const adminOwnerId = String(user.app_metadata.ownerId || user.id || '');
+      if (adminOwnerId && record.ownerId === adminOwnerId) {
+        throw Object.assign(new Error('You cannot approve or reject your own maintenance payment.'), { status: 403 });
+      }
       record.status = status;
       return publicMaintenance(record);
     });
   }
 
-  async updateOwnerMaintenanceDetails({ title, quarter, paymentDate, paymentMethod, reference, evidenceFile }, user) {
-    if (user.app_metadata.role !== 'owner') throw new Error('Owner access is required to submit payment details.');
+  async updateOwnerMaintenanceDetails({ title, quarter, paymentDate, paymentMethod, paidAmount, reference, remarks, evidenceFile, evidenceName }, user) {
     return this.transaction((data) => {
-      const ownerId = String(user.app_metadata.ownerId || '');
+      const ownerId = String(user.app_metadata.ownerId || user.id || '');
+      if (!ownerId) throw Object.assign(new Error('No Owner ID is linked to this account.'), { status: 403 });
       const record = data.maintenance.find((item) => item.ownerId === ownerId && item.title === String(title) && item.quarter === String(quarter));
       if (!record) throw new Error('Maintenance record not found for this Owner.');
-      if (!['Pending', 'Pending Approval'].includes(record.status)) throw new Error('Only pending maintenance records can be edited.');
+      if (record.status === 'Pending Approval') {
+        throw Object.assign(new Error('This maintenance payment is awaiting Admin approval. Duplicate submissions are not allowed.'), { status: 409 });
+      }
+      if (!['Pending', 'Rejected'].includes(record.status)) throw new Error('Only pending or rejected maintenance records can be submitted.');
       const normalizedDate = clean(paymentDate, 10);
       const parsedDate = new Date(`${normalizedDate}T00:00:00Z`);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate) || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== normalizedDate) {
         throw new Error('Enter a valid payment date.');
       }
       if (!['UPI', 'Bank transfer', 'Cash', 'Other'].includes(paymentMethod)) throw new Error('Choose a valid payment method.');
-      if (evidenceFile && !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]*={0,2}$/.test(evidenceFile) && !/^[a-f0-9-]{36}\.(jpg|png|webp)$/.test(evidenceFile)) throw new Error('The evidence image is invalid.');
-      if (!record.evidenceFile && !evidenceFile) throw new Error('Upload an image as payment evidence.');
+      const amountInCents = Math.round(Number(paidAmount) * 100);
+      const dueInCents = Math.round(Number(record.paymentAmount) * 100);
+      if (!Number.isSafeInteger(amountInCents) || amountInCents <= 0 || amountInCents !== dueInCents) {
+        throw new Error('Paid amount must equal the full maintenance amount due.');
+      }
+      if (!evidenceFile || (!isEvidenceDataUri(evidenceFile) && !isEvidenceFilename(evidenceFile) && !isDriveEvidenceReference(evidenceFile))) {
+        throw new Error('Upload valid JPG, PNG, or PDF payment evidence before submitting.');
+      }
       const previousEvidenceFile = record.evidenceFile || '';
       record.paymentDate = normalizedDate;
       record.paymentMethod = paymentMethod;
       record.reference = clean(reference, 120);
+      record.paidAmount = amountInCents / 100;
+      record.remarks = clean(remarks, 500);
       if (evidenceFile) record.evidenceFile = evidenceFile;
+      record.evidenceName = clean(evidenceName, 120);
       record.status = 'Pending Approval';
       return { payment: publicMaintenance(record), previousEvidenceFile };
     });
