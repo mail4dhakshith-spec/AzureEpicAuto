@@ -13,7 +13,7 @@ Set these in the GoDaddy Node.js App environment:
 
 Do not set `VITE_*` or secret values in browser-visible variables.
 
-The React app defaults to the same-origin API path, `/api`. Keep `VITE_API_URL=/api` when the frontend and API share a host; this avoids cross-origin preflight requests. If using separate hosts, set `ALLOWED_ORIGINS` to the exact frontend origins. The Airo production and preview origins are explicitly allowed by the server.
+The React app uses the same-origin API path, `/api`, on `*.airoapp.ai` hosts, avoiding cross-origin requests to Airo's private preview host. On other hosts, `VITE_API_URL` may configure a separate API. For intentional cross-origin deployments, set `ALLOWED_ORIGINS` to the exact frontend origins.
 
 ## Google key repair
 

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowRight, CheckCircle2, Eye, EyeOff, LockKeyhole, ShieldCheck, Smartphone } from 'lucide-react';
+import { getApiUrl } from '../apiUrl.js';
 import './auth.css';
 
-const API_URL = import.meta.env.VITE_API_URL || '/api';
+const API_URL = getApiUrl(window.location.hostname, import.meta.env.VITE_API_URL);
 
 export default function AuthScreen({ onAuthenticated, setupError = '', initialError = '' }) {
   const [mobileNumber, setMobileNumber] = useState('');

@@ -7,8 +7,9 @@ import {
   Paperclip, Trash2, UsersRound, WalletCards, X,
 } from 'lucide-react';
 import AuthScreen from './auth/AuthScreen.jsx';
+import { getApiUrl } from './apiUrl.js';
 
-const API_URL = import.meta.env.VITE_API_URL || '/api';
+const API_URL = getApiUrl(window.location.hostname, import.meta.env.VITE_API_URL);
 const AUTH_STORAGE_KEY = 'ssn-treasury-session-v1';
 const CURRENCY = import.meta.env.VITE_CURRENCY || 'INR';
 const DATABASE_GOOGLE_SHEET_URL = import.meta.env.VITE_DATABASE_GOOGLE_SHEET_URL || 'https://docs.google.com/spreadsheets/';
