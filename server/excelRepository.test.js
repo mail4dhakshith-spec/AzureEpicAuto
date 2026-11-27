@@ -68,12 +68,12 @@ test('loads and updates only the authenticated owner profile without changing li
     await repository.transaction((data) => {
       data.owners.find((item) => item.ownerId === otherOwner.id).role = 'Admin';
     });
+    const ownerSession = { id: owner.id, app_metadata: { role: 'owner', ownerId: owner.id } };
     const [payment] = (await repository.generateQuarterlyMaintenance({
       ownerId: owner.id, phase: owner.phase, quarter: 'Q1', financialYear: '2026-27',
     }, admin)).created;
-    await repository.createExpense({ ownerId: owner.id, title: 'Profile-linked expense', amount: 100, expenseType: 'Road' }, admin);
+    await repository.createExpense({ ownerId: owner.id, title: 'Profile-linked expense', amount: 100, expenseType: 'Road' }, ownerSession);
     const expensesBefore = (await repository.read()).expenses;
-    const ownerSession = { id: owner.id, app_metadata: { role: 'owner', ownerId: owner.id } };
 
     const loaded = await repository.getMyProfile(ownerSession);
     assert.equal(loaded.id, owner.id);
@@ -170,9 +170,10 @@ test('allows an owner or admin to change only their own password after current-p
 test('creates unique expenses and records approvals, rejection history, and payment status', async () => {
   await withRepository(async (repository) => {
     const owner = await repository.createOwner(ownerInput('Ari Nair', '+15551000010', 'Phase 1', 'A-10'), admin);
+    const ownerSession = { id: owner.id, app_metadata: { role: 'owner', ownerId: owner.id } };
     const attachmentFile = '123e4567-e89b-12d3-a456-426614174000.pdf';
-    await assert.rejects(repository.createExpense({ ownerId: owner.id, title: 'Water pump repair', amount: 100, expenseType: 'Other' }, admin), /valid Expense Type/);
-    const expense = await repository.createExpense({ ownerId: owner.id, title: 'Water pump repair', description: 'Replace motor', amount: 12500, expenseType: 'Phase 1 Park', attachmentName: 'invoice.pdf', attachmentFile }, admin);
+    await assert.rejects(repository.createExpense({ ownerId: owner.id, title: 'Water pump repair', amount: 100, expenseType: 'Other' }, ownerSession), /valid Expense Type/);
+    const expense = await repository.createExpense({ ownerId: owner.id, title: 'Water pump repair', description: 'Replace motor', amount: 12500, expenseType: 'Phase 1 Park', attachmentName: 'invoice.pdf', attachmentFile }, ownerSession);
     assert.match(expense.id, /^EXP-/);
     assert.equal(expense.status, 'Pending');
     assert.equal(expense.attachmentName, 'invoice.pdf');
@@ -183,7 +184,7 @@ test('creates unique expenses and records approvals, rejection history, and paym
     const rejected = await repository.updateExpenseStatus(expense.id, 'Rejected', 'Missing invoice', admin);
     assert.equal(rejected.status, 'Rejected');
     assert.match(rejected.approvedBy, /^Rejected by:/);
-    const next = await repository.createExpense({ ownerId: owner.id, title: 'Gate repair', amount: 3000, expenseType: 'Road' }, admin);
+    const next = await repository.createExpense({ ownerId: owner.id, title: 'Gate repair', amount: 3000, expenseType: 'Road' }, ownerSession);
     await repository.updateExpenseStatus(next.id, 'Approved', '', admin);
     const paid = await repository.updateExpenseStatus(next.id, 'Paid', '', admin);
     assert.equal(paid.status, 'Paid');
@@ -191,10 +192,30 @@ test('creates unique expenses and records approvals, rejection history, and paym
   });
 });
 
+test('associates an Admin-created expense with the logged-in Admin profile', async () => {
+  await withRepository(async (repository) => {
+    const adminOwner = await repository.createOwner(ownerInput('Expense Admin', '+15551000048', 'Phase 1', 'A-48'), admin);
+    const otherOwner = await repository.createOwner(ownerInput('Other Owner', '+15551000049', 'Phase 2', 'B-49'), admin);
+    await repository.transaction((data) => {
+      data.owners.find((item) => item.ownerId === adminOwner.id).role = 'Admin';
+    });
+    const adminSession = { id: adminOwner.id, app_metadata: { role: 'admin', ownerId: adminOwner.id } };
+    const expense = await repository.createExpense({
+      ownerId: otherOwner.id,
+      title: 'Admin office expense',
+      amount: 900,
+      expenseType: 'Road',
+    }, adminSession);
+
+    assert.equal(expense.requestedBy, '15551000048');
+    assert.notEqual(expense.requestedBy, otherOwner.mobileNumber.replace(/\D/g, ''));
+  });
+});
+
 test('deletes an Owner and their linked expenses and maintenance records', async () => {
   await withRepository(async (repository) => {
     const owner = await repository.createOwner(ownerInput('Lee Park', '+15551000030', 'Phase 1', 'A-30'), admin);
-    await repository.createExpense({ ownerId: owner.id, title: 'Water filter', amount: 800, expenseType: 'EB Work' }, admin);
+    await repository.createExpense({ ownerId: owner.id, title: 'Water filter', amount: 800, expenseType: 'EB Work' }, { id: owner.id, app_metadata: { role: 'owner', ownerId: owner.id } });
     await repository.generateQuarterlyMaintenance({ ownerId: owner.id, phase: owner.phase, quarter: 'Q3', financialYear: '2026-27' }, admin);
     const deleted = await repository.deleteOwner(owner.id);
     assert.deepEqual(deleted, { owner: { id: owner.id, name: owner.name }, deletedExpenses: 1, deletedExpenseFiles: [], deletedMaintenance: 1, deletedEvidenceFiles: [] });
@@ -209,7 +230,7 @@ test('deletes an Owner and their linked expenses and maintenance records', async
 test('deletes individual expense and maintenance records by identifier', async () => {
   await withRepository(async (repository) => {
     const owner = await repository.createOwner(ownerInput('Ari Cole', '+15551000031', 'Phase 2', 'B-31'), admin);
-    const expense = await repository.createExpense({ ownerId: owner.id, title: 'Gate repair', amount: 1800, expenseType: 'Road' }, admin);
+    const expense = await repository.createExpense({ ownerId: owner.id, title: 'Gate repair', amount: 1800, expenseType: 'Road' }, { id: owner.id, app_metadata: { role: 'owner', ownerId: owner.id } });
     const { created } = await repository.generateQuarterlyMaintenance({ ownerId: owner.id, phase: owner.phase, quarter: 'Q4', financialYear: '2026-27' }, admin);
     assert.equal((await repository.deleteExpense(expense.id)).id, expense.id);
     assert.equal((await repository.deleteMaintenance({ ownerId: owner.id, title: created[0].title, quarter: 'Q4' }, admin)).ownerId, owner.id);
@@ -292,15 +313,32 @@ test('generates one ₹1,500 quarterly maintenance record for the selected Owner
   });
 });
 
-test('supports pending, approved, and rejected income with self-approval protection', async () => {
+test('allows Admins to approve or reject their own income requests', async () => {
   await withRepository(async (repository) => {
-    const income = await repository.createIncome({ title: 'Hall rental', description: 'Community hall booking', amount: 5000, incomeDate: '2026-11-21', financialYear: '2026-27', comments: 'October booking' }, admin);
-    assert.equal(income.status, 'Pending');
+    const adminSession = {
+      id: admin.id,
+      app_metadata: { role: 'admin', ownerId: admin.id },
+      user_metadata: { full_name: 'Treasury Admin' },
+    };
+    const approvedIncome = await repository.createIncome({
+      title: 'Hall rental', description: 'Community hall booking', amount: 5000,
+      incomeDate: '2026-11-21', financialYear: '2026-27', comments: 'October booking',
+    }, adminSession);
+    assert.equal(approvedIncome.status, 'Pending');
+    const approved = await repository.updateIncomeStatus(approvedIncome.id, 'Approved', '', adminSession);
+    assert.equal(approved.status, 'Approved');
+    assert.equal(approved.approvedBy, 'Treasury Admin');
+
+    const rejectedIncome = await repository.createIncome({
+      title: 'Event proceeds', amount: 2500, incomeDate: '2026-11-22', financialYear: '2026-27',
+    }, adminSession);
+    const rejected = await repository.updateIncomeStatus(rejectedIncome.id, 'Rejected', 'Missing receipt', adminSession);
+    assert.equal(rejected.status, 'Rejected');
+    assert.equal(rejected.comments, 'Missing receipt');
+
     const owner = await repository.createOwner(ownerInput('Income Owner', '+15551000025', 'Phase 1', 'A-25'), admin);
-    await assert.rejects(repository.updateIncomeStatus(income.id, 'Approved', '', { id: income.requestedBy, app_metadata: { role: 'admin', ownerId: income.requestedBy }, user_metadata: { full_name: 'Treasury Admin' } }), /cannot approve or reject your own income request/);
-    const ownerRecord = await repository.createOwner(ownerInput('Income Other Owner', '+15551000026', 'Phase 1', 'A-26'), admin);
-    void owner;
-    void ownerRecord;
+    const ownerSession = { id: owner.id, app_metadata: { role: 'owner', ownerId: owner.id } };
+    await assert.rejects(repository.updateIncomeStatus(approvedIncome.id, 'Rejected', '', ownerSession), /Administrator access is required/);
   });
 });
 

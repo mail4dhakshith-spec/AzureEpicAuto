@@ -51,7 +51,7 @@ const NAV_ITEMS = [
   { id: 'owners', label: 'Owners', icon: UsersRound },
   { id: 'my-profile', label: 'My Profile', icon: UserRound },
 ];
-const ADMIN_NAV_ITEM_IDS = new Set(['expenses', 'owners-maintenance', 'quarterly', 'owners']);
+const ADMIN_NAV_ITEM_IDS = new Set(['expenses', 'income', 'owners-maintenance', 'quarterly', 'owners']);
 
 async function encodeEvidenceFile(file) {
   const dataUrl = await new Promise((resolve, reject) => {
@@ -390,10 +390,14 @@ function TreasuryApp({ role, user, onSignOut }) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const file = form.get('attachment');
-    const ownerId = role === 'owner' ? user.id : form.get('ownerId');
+    const ownerId = String(user.id || '');
     const owner = data.owners.find((item) => item.id === ownerId);
+    if (!owner) {
+      notify('Your account is not linked to an Owner profile.');
+      return;
+    }
     const expense = {
-      ownerId: owner?.id || '', title: form.get('title'), description: form.get('description'),
+      ownerId: owner.id, title: form.get('title'), description: form.get('description'),
       comment: form.get('comment'), amount: Number(form.get('amount')), expenseType: form.get('expenseType'), financialYear: form.get('financialYear') || selectedFinancialYear,
     };
     let attachment;
@@ -711,7 +715,7 @@ function TreasuryApp({ role, user, onSignOut }) {
       <input ref={importRef} className="visually-hidden" type="file" accept=".xlsx" onChange={importOwners} />
       {notice && <div className="toast" role="status"><CheckCircle2 size={17} />{notice}<button className="toast-close" aria-label="Dismiss" onClick={() => setNotice('')}><X size={15} /></button></div>}
       {modal && <Modal title={modal === 'expense' ? 'New expense request' : modal === 'maintenance' ? 'Generate quarterly maintenance' : editingOwner ? 'Edit owner details' : 'Add owner details'} onClose={() => { setModal(''); setEditingOwner(null); setSelectedMaintenancePhase(''); setSelectedMaintenanceOwnerId(''); }}>
-        {modal === 'expense' && <form className="record-form" onSubmit={submitExpense}><p className="form-intro">Create an expense request for Admin review.</p>{role === 'admin' ? <label>Owner<select name="ownerId" required defaultValue=""><option value="" disabled>Select owner</option>{data.owners.map((owner) => <option key={owner.id} value={owner.id}>{owner.name} · Plot {owner.plotNumber}</option>)}</select></label> : <div className="owner-summary"><div className="owner-summary-icon"><UsersRound size={18} /></div><div><strong>{data.owners.find((owner) => owner.id === user.id)?.name || displayName}</strong><span>Requesting as your account</span></div></div>}<div className="form-grid"><label>Expense Type<select name="expenseType" required defaultValue=""><option value="" disabled>Select an expense type</option>{EXPENSE_TYPES.map((type) => <option key={type}>{type}</option>)}</select></label><label>Amount ({CURRENCY})<input name="amount" type="number" min="0.01" step="0.01" placeholder="0" required /></label></div><div className="form-grid"><label>Financial Year<select name="financialYear" defaultValue={selectedFinancialYear}>{financialYearOptions().map((item) => <option key={item} value={item}>FY {item}</option>)}</select></label></div><label>Title<input name="title" maxLength="120" placeholder="Expense title" required /></label><label>Description<textarea name="description" rows="3" maxLength="1000" placeholder="Describe the expense" /></label><label>Comment<textarea name="comment" rows="2" maxLength="1000" placeholder="Additional details" /></label><label className="expense-attachment-field">Attachment (optional)<span><Paperclip size={15} /><input name="attachment" type="file" accept=".pdf,image/jpeg,image/png,image/webp" /><small>PDF or image, up to 10 MB</small></span></label><div className="form-footer"><span><ShieldCheck size={15} /> Saved to Expense Details</span><button className="button button-primary" disabled={busy}><Plus size={16} /> Submit request</button></div></form>}
+        {modal === 'expense' && <form className="record-form" onSubmit={submitExpense}><p className="form-intro">Create an expense request for Admin review.</p><div className="owner-summary"><div className="owner-summary-icon"><UsersRound size={18} /></div><div><strong>{data.owners.find((owner) => String(owner.id) === String(user.id))?.name || displayName}</strong><span>Requesting under your profile</span></div></div><div className="form-grid"><label>Expense Type<select name="expenseType" required defaultValue=""><option value="" disabled>Select an expense type</option>{EXPENSE_TYPES.map((type) => <option key={type}>{type}</option>)}</select></label><label>Amount ({CURRENCY})<input name="amount" type="number" min="0.01" step="0.01" placeholder="0" required /></label></div><div className="form-grid"><label>Financial Year<select name="financialYear" defaultValue={selectedFinancialYear}>{financialYearOptions().map((item) => <option key={item} value={item}>FY {item}</option>)}</select></label></div><label>Title<input name="title" maxLength="120" placeholder="Expense title" required /></label><label>Description<textarea name="description" rows="3" maxLength="1000" placeholder="Describe the expense" /></label><label>Comment<textarea name="comment" rows="2" maxLength="1000" placeholder="Additional details" /></label><label className="expense-attachment-field">Attachment (optional)<span><Paperclip size={15} /><input name="attachment" type="file" accept=".pdf,image/jpeg,image/png,image/webp" /><small>PDF or image, up to 10 MB</small></span></label><div className="form-footer"><span><ShieldCheck size={15} /> Saved to Expense Details</span><button className="button button-primary" disabled={busy}><Plus size={16} /> Submit request</button></div></form>}
         {modal === 'maintenance' && <form className="record-form" onSubmit={generateQuarterlyMaintenance}><p className="form-intro">Create one pending record for the selected user.</p><label>Phase<select name="phase" value={selectedMaintenancePhase} onChange={(event) => { setSelectedMaintenancePhase(event.target.value); setSelectedMaintenanceOwnerId(''); }} required><option value="" disabled>Select a phase</option>{['Phase 1', 'Phase 2', 'Phase 3'].map((phase) => <option key={phase}>{phase}</option>)}</select></label><label>User<select name="ownerId" value={selectedMaintenanceOwnerId} onChange={(event) => setSelectedMaintenanceOwnerId(event.target.value)} disabled={!selectedMaintenancePhase} required><option value="" disabled>Select a user</option>{data.owners.filter((owner) => owner.phase === selectedMaintenancePhase).map((owner) => <option key={owner.id} value={owner.id}>{owner.name} · {owner.username}</option>)}</select></label><label>Plot number<input value={data.owners.find((owner) => owner.id === selectedMaintenanceOwnerId)?.plotNumber || ''} placeholder="Selected user's plot" readOnly /></label><div className="form-grid"><label>Financial Year<select name="financialYear" defaultValue={selectedFinancialYear}>{financialYearOptions().map((item) => <option key={item} value={item}>FY {item}</option>)}</select></label><label>Quarter<select name="quarter" defaultValue="Q1">{QUARTERS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Financial year<input name="financialYear" defaultValue={financialYear()} pattern="[0-9]{4}-[0-9]{2}" required /></label></div><div className="maintenance-total-note">Quarterly amount per house <strong>{money(QUARTERLY_MAINTENANCE_AMOUNT)}</strong></div><div className="form-footer"><span><ShieldCheck size={15} /> Existing user-quarter records are skipped</span><button className="button button-primary" disabled={busy || !selectedMaintenanceOwnerId}><Plus size={16} /> Generate record</button></div></form>}
         {modal === 'owner' && <form className="record-form" onSubmit={submitOwner}>
           <p className="form-intro">{editingOwner ? `Update ${editingOwner.name}'s Owner Details record.` : 'Owner IDs and creator details are assigned automatically.'}</p>
@@ -1032,6 +1036,8 @@ function IncomePage({ role, selectedFinancialYear, setSelectedFinancialYear }) {
   async function saveIncome(event) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const incomeId = modalIncome?.id;
+    const editingExistingIncome = Boolean(incomeId);
     setBusy(true);
     try {
       const record = { title: form.get('title'), description: form.get('description'), amount: form.get('amount'), incomeDate: form.get('incomeDate'), financialYear: form.get('financialYear'), comments: form.get('comments') };
@@ -1042,7 +1048,7 @@ function IncomePage({ role, selectedFinancialYear, setSelectedFinancialYear }) {
         const dataUrl = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(new Error('The attachment could not be read.')); reader.readAsDataURL(file); });
         attachment = { originalName: file.name, mediaType: file.type, dataBase64: String(dataUrl).split(',')[1] };
       }
-      await request(modalIncome ? 'updateIncome' : 'createIncome', modalIncome ? { id: modalIncome.id, income: { ...record, evidenceName: modalIncome.evidenceName || '', evidenceFile: modalIncome.evidenceFile || '' }, attachment } : { income: record, attachment });
+      await request(editingExistingIncome ? 'updateIncome' : 'createIncome', editingExistingIncome ? { id: incomeId, income: { ...record, evidenceName: modalIncome.evidenceName || '', evidenceFile: modalIncome.evidenceFile || '' }, attachment } : { income: record, attachment });
       await refresh();
       setModalIncome(null);
     } catch (error) {

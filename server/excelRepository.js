@@ -659,7 +659,6 @@ export class ExcelTreasuryRepository {
       const record = (data.income || []).find((item) => item.incomeId === String(incomeId));
       if (!record) throw new Error('Income record not found.');
       if (!['Approved', 'Rejected'].includes(status)) throw new Error('Choose Approved or Rejected.');
-      if (record.requestedBy === String(user.app_metadata.ownerId || user.id)) throw new Error('You cannot approve or reject your own income request.');
       record.status = status;
       record.approvedBy = actorName(user);
       record.approvedDate = isoDate();
@@ -677,10 +676,9 @@ export class ExcelTreasuryRepository {
 
   async createExpense(input, user) {
     return this.transaction((data) => {
-      const owner = user.app_metadata.role === 'owner'
-        ? data.owners.find((item) => item.ownerId === String(user.app_metadata.ownerId))
-        : data.owners.find((item) => item.ownerId === String(input.ownerId));
-      if (!owner) throw new Error('Select a valid Owner.');
+      const ownerId = authenticatedOwnerId(user);
+      const owner = data.owners.find((item) => item.ownerId === ownerId);
+      if (!owner) throw Object.assign(new Error('Your account is not linked to an Owner profile.'), { status: 403 });
       const expenseType = clean(input.expenseType, 40);
       if (!EXPENSE_TYPES.includes(expenseType)) throw new Error('Choose a valid Expense Type.');
       const amount = Number(input.amount);
