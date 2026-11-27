@@ -230,6 +230,10 @@ h1, h2, h3, p { margin: 0; }
 .table-wrap { width: 100%; overflow-x: auto; }
 .listing-panel .data-table th { height: 40px; }
 .listing-panel .data-table td { height: 64px; }
+.owners-maintenance-table th:first-child, .owners-maintenance-table td:first-child { position: sticky; left: 0; width: 180px; min-width: 180px; z-index: 2; }
+.owners-maintenance-table th:first-child { z-index: 3; background: #fafbf9; }
+.owners-maintenance-table td:first-child { background: #fff; box-shadow: 1px 0 #edf0eb; }
+.owners-maintenance-table tbody tr:hover td:first-child { background: #fbfcfa; }
 .table-footer { display: flex; justify-content: space-between; padding: 12px 17px; border-top: 1px solid #edf0eb; color: #98a19b; font-size: 9px; }
  .payment-summary { display: grid; grid-template-columns: repeat(3, 1fr); margin: 2px 0 16px; border: 1px solid #e7ebe4; border-radius: 5px; background: #fff; }
 .payment-summary > div { display: flex; flex-direction: column; gap: 5px; padding: 14px 18px; border-right: 1px solid #edf0eb; }
@@ -383,6 +387,7 @@ h1, h2, h3, p { margin: 0; }
 .evidence-upload-preview > span > small { color: #929b95; font-size: 8px; }
 .evidence-upload-preview > div { display: flex; flex: 0 0 auto; gap: 5px; }
 .maintenance-admin-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.maintenance-admin-actions .whatsapp-button { color: #167447; text-decoration: none; }
 .button-compact { min-height: 29px; padding: 0 8px; font-size: 9px; }
 .button-reject { color: #a64e43; }
 .button-reject:hover { border-color: #e5c7c1; background: #fbf3f1; }

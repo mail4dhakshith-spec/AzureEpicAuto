@@ -407,6 +407,44 @@ async function api(request, response) {
         }
         break;
       }
+      case 'updateAdminMaintenanceDetails': {
+        requireAdmin(user);
+        const evidenceParentId = drive && body.evidence
+          ? (await drive.files.get({
+            fileId: driveFileId,
+            fields: 'parents',
+            supportsAllDrives: true,
+          })).data?.parents?.[0] || ''
+          : '';
+        const storedEvidence = body.evidence
+          ? await storePaymentEvidence(body.evidence, evidenceDirectory, drive, evidenceParentId)
+          : null;
+        try {
+          const update = await repository.updateAdminMaintenanceDetails({
+            ...body,
+            evidenceFile: storedEvidence?.evidenceFile || '',
+            evidenceName: storedEvidence?.evidenceName || '',
+          }, user);
+          if (update.previousEvidenceFile && update.previousEvidenceFile !== update.payment.evidenceFile) {
+            try {
+              await removePaymentEvidence(update.previousEvidenceFile, evidenceDirectory, drive);
+            } catch (cleanupError) {
+              console.error('Could not remove replaced maintenance evidence:', cleanupError);
+            }
+          }
+          result = { payment: update.payment };
+        } catch (error) {
+          if (storedEvidence?.evidenceFile) {
+            try {
+              await removePaymentEvidence(storedEvidence.evidenceFile, evidenceDirectory, drive);
+            } catch (cleanupError) {
+              console.error('Could not remove unreferenced maintenance evidence:', cleanupError);
+            }
+          }
+          throw error;
+        }
+        break;
+      }
       case 'updateMaintenanceStatus':
         requireAdmin(user);
         result = { payment: await repository.updateMaintenanceStatus(body, user) };

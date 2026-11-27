@@ -812,7 +812,50 @@ export class ExcelTreasuryRepository {
         throw Object.assign(new Error('You cannot approve or reject your own maintenance payment.'), { status: 403 });
       }
       record.status = status;
+      if (status === 'Paid' && !(Number(record.paidAmount) > 0)) {
+        record.paidAmount = Number(record.paymentAmount) || 0;
+      }
       return publicMaintenance(record);
+    });
+  }
+
+  async updateAdminMaintenanceDetails({ ownerId, title, quarter, paymentDate, paymentMethod, paidAmount, reference, remarks, evidenceFile, evidenceName }, user) {
+    this.requireAdmin(user);
+    return this.transaction((data) => {
+      const record = data.maintenance.find((item) => item.ownerId === String(ownerId) && item.title === String(title) && item.quarter === String(quarter));
+      if (!record) throw new Error('Maintenance record not found.');
+      if (record.status === 'Paid') throw new Error('Paid maintenance records are read-only.');
+      const adminOwnerId = String(user.app_metadata.ownerId || user.id || '');
+      if (adminOwnerId && record.ownerId === adminOwnerId) {
+        throw Object.assign(new Error('You cannot approve or reject your own maintenance payment.'), { status: 403 });
+      }
+
+      const normalizedDate = clean(paymentDate, 10);
+      const parsedDate = new Date(`${normalizedDate}T00:00:00Z`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate) || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== normalizedDate) {
+        throw new Error('Enter a valid payment date.');
+      }
+      if (!['UPI', 'Bank transfer', 'Cash', 'Other'].includes(paymentMethod)) throw new Error('Choose a valid payment method.');
+      const amountInCents = Math.round(Number(paidAmount) * 100);
+      const dueInCents = Math.round(Number(record.paymentAmount) * 100);
+      if (!Number.isSafeInteger(amountInCents) || amountInCents <= 0 || amountInCents !== dueInCents) {
+        throw new Error('Paid amount must equal the full maintenance amount due.');
+      }
+      const finalEvidenceFile = evidenceFile || record.evidenceFile || '';
+      if (!finalEvidenceFile || (!isEvidenceDataUri(finalEvidenceFile) && !isEvidenceFilename(finalEvidenceFile) && !isDriveEvidenceReference(finalEvidenceFile))) {
+        throw new Error('Upload valid JPG, PNG, or PDF payment evidence before marking this payment as paid.');
+      }
+
+      const previousEvidenceFile = record.evidenceFile || '';
+      record.paymentDate = normalizedDate;
+      record.paymentMethod = paymentMethod;
+      record.reference = clean(reference, 120);
+      record.paidAmount = amountInCents / 100;
+      record.remarks = clean(remarks, 500);
+      record.evidenceFile = finalEvidenceFile;
+      if (evidenceFile) record.evidenceName = clean(evidenceName, 120);
+      record.status = 'Paid';
+      return { payment: publicMaintenance(record), previousEvidenceFile };
     });
   }
 

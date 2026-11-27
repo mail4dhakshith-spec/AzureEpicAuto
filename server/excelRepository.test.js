@@ -285,7 +285,9 @@ test('generates one ₹1,500 quarterly maintenance record for the selected Owner
     const secondOwnerRecord = await repository.generateQuarterlyMaintenance({ ...request, ownerId: noah.ownerId, phase: noah.phase }, admin);
     assert.equal(secondOwnerRecord.created[0].ownerId, noah.ownerId);
     await repository.updateMaintenanceStatus({ ownerId: first.created[0].ownerId, title: first.created[0].title, quarter: 'Q2', status: 'Paid' }, admin);
-    assert.equal((await repository.read()).maintenance.filter((item) => item.status === 'Paid').length, 1);
+    const paidRecord = (await repository.read()).maintenance.find((item) => item.ownerId === mia.id && item.quarter === 'Q2');
+    assert.equal(paidRecord.status, 'Paid');
+    assert.equal(paidRecord.paidAmount, paidRecord.paymentAmount);
     const miaSession = {
       id: mia.id,
       phone: mia.phone,
@@ -495,6 +497,47 @@ test('allows an Owner to edit their pending payment details with evidence only f
       paidAmount: 1500,
       evidenceFile,
     }, ownerSession), /Only pending/);
+  });
+});
+
+test('allows an Admin to edit payment details and evidence while marking an unpaid record Paid', async () => {
+  await withRepository(async (repository) => {
+    const owner = await repository.createOwner(ownerInput('Asha Dev', '+15551000045', 'Phase 1', 'A-45'), admin);
+    const payment = (await repository.generateQuarterlyMaintenance({
+      ownerId: owner.id, phase: owner.phase, quarter: 'Q1', financialYear: '2026-27',
+    }, admin)).created[0];
+    const evidenceFile = '123e4567-e89b-12d3-a456-426614174003.jpg';
+    const details = {
+      ownerId: owner.id,
+      title: payment.title,
+      quarter: payment.quarter,
+      paymentDate: '2026-11-12',
+      paymentMethod: 'UPI',
+      paidAmount: 1500,
+      reference: 'UPI-00045',
+      remarks: 'Verified by Admin',
+    };
+
+    await assert.rejects(repository.updateAdminMaintenanceDetails(details, {
+      app_metadata: { role: 'owner', ownerId: owner.id },
+    }), /Administrator access is required/);
+    await assert.rejects(repository.updateAdminMaintenanceDetails(details, admin), /Upload valid JPG, PNG, or PDF/);
+
+    const updated = await repository.updateAdminMaintenanceDetails({
+      ...details,
+      evidenceFile,
+      evidenceName: 'admin-payment-proof.jpg',
+    }, admin);
+    assert.equal(updated.previousEvidenceFile, '');
+    assert.equal(updated.payment.evidenceFile, evidenceFile);
+    assert.equal(updated.payment.evidenceName, 'admin-payment-proof.jpg');
+    assert.equal(updated.payment.paymentDate, '2026-11-12');
+    assert.equal(updated.payment.paymentMethod, 'UPI');
+    assert.equal(updated.payment.paidAmount, 1500);
+    assert.equal(updated.payment.reference, 'UPI-00045');
+    assert.equal(updated.payment.remarks, 'Verified by Admin');
+    assert.equal(updated.payment.status, 'Paid');
+    await assert.rejects(repository.updateAdminMaintenanceDetails(details, admin), /Paid maintenance records are read-only/);
   });
 });
 

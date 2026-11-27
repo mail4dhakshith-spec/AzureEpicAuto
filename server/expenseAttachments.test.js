@@ -8,12 +8,17 @@ import { isExpenseAttachmentFilename, MAX_EXPENSE_ATTACHMENT_BYTES, removeExpens
 test('stores supported expense attachments under generated safe filenames', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'ssn-expense-attachments-'));
   const pdf = Buffer.from('%PDF-1.7\nEvidence file');
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
   try {
     const filename = await storeExpenseAttachment({ dataBase64: pdf.toString('base64'), mediaType: 'application/pdf' }, directory);
     assert.equal(isExpenseAttachmentFilename(filename), true);
     assert.deepEqual(await readFile(path.join(directory, filename)), pdf);
     await removeExpenseAttachment(filename, directory);
     await assert.rejects(readFile(path.join(directory, filename)), { code: 'ENOENT' });
+
+    const pngFilename = await storeExpenseAttachment({ dataBase64: png.toString('base64'), mediaType: 'image/png' }, directory);
+    assert.match(pngFilename, /\.png$/);
+    assert.deepEqual(await readFile(path.join(directory, pngFilename)), png);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

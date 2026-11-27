@@ -3,7 +3,7 @@ import {
   ArrowDownLeft, ArrowUpRight, BadgeCheck, Bell, CalendarDays, Check,
   CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleHelp,
   Clock3, Download, FileSpreadsheet, FileText, Filter, KeyRound, LayoutDashboard,
-  LogOut, Menu, MoreHorizontal, Pencil, Plus, Save, Search, Settings2, ShieldCheck,
+  LogOut, Menu, MessageCircle, MoreHorizontal, Pencil, Plus, Save, Search, Settings2, ShieldCheck,
   Paperclip, Trash2, UserRound, UsersRound, WalletCards, X,
 } from 'lucide-react';
 import AuthScreen from './auth/AuthScreen.jsx';
@@ -47,7 +47,7 @@ const NAV_ITEMS = [
   { id: 'income', label: 'Income', icon: WalletCards },
   { id: 'my-maintenance', label: 'My Maintenance', icon: WalletCards },
   { id: 'owners-maintenance', label: 'Owners Maintenance Details', icon: WalletCards },
-  { id: 'quarterly', label: 'Quarterly Payment Management', icon: CalendarDays },
+  { id: 'quarterly', label: 'Quarterly Payment Generation', icon: CalendarDays },
   { id: 'owners', label: 'Owners', icon: UsersRound },
   { id: 'my-profile', label: 'My Profile', icon: UserRound },
 ];
@@ -553,6 +553,43 @@ function TreasuryApp({ role, user, onSignOut }) {
     }
   }
 
+  async function submitAdminMaintenanceDetails(event) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const file = form.get('evidence');
+    setBusy(true);
+    try {
+      if (file instanceof File && file.size) {
+        const maxBytes = file.type === 'application/pdf' ? 10 * 1024 * 1024 : 4 * 1024 * 1024;
+        if (file.size > maxBytes || !['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+          throw new Error('Choose a PDF smaller than 10 MB or a JPEG, PNG, or WebP image smaller than 4 MB.');
+        }
+      }
+      const result = await request('updateAdminMaintenanceDetails', {
+        ownerId: editingMaintenance.ownerId,
+        title: editingMaintenance.title,
+        quarter: editingMaintenance.quarter,
+        paymentDate: form.get('paymentDate'),
+        paymentMethod: form.get('paymentMethod'),
+        paidAmount: form.get('paidAmount'),
+        reference: form.get('reference'),
+        remarks: form.get('remarks'),
+        evidence: file instanceof File && file.size ? await encodeEvidenceFile(file) : undefined,
+      });
+      setData((current) => {
+        const maintenance = current.maintenance.map((item) => item.id === result.payment.id ? result.payment : item);
+        return { ...current, maintenance, payments: maintenance };
+      });
+      setEditingMaintenance(null);
+      setSelectedEvidence(null);
+      notify('Payment details and evidence saved; status changed to Paid.');
+    } catch (error) {
+      notify(error.message || 'Payment details could not be saved.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function deleteRecord(action, payload, confirmation, successMessage) {
     if (!window.confirm(confirmation)) return;
     setBusy(true);
@@ -700,10 +737,10 @@ function TreasuryApp({ role, user, onSignOut }) {
           {page === 'income' && <IncomePage role={role} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} />}
           {page === 'expenses' && role === 'admin' && <ExpensesPage expenses={filteredExpenses} query={query} setQuery={setQuery} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} onNew={() => setModal('expense')} onSelect={setSelectedExpense} canDelete onDelete={deleteExpense} />}
           {page === 'payments' && (role === 'admin'
-            ? <OwnersMaintenancePage payments={(data.maintenance || []).filter((item) => recordMatchesFinancialYear(item, selectedFinancialYear))} owners={data.owners || []} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} onUpdateStatus={updateMaintenanceStatus} onDelete={deleteMaintenance} busy={busy} currentOwnerId={user.id} />
+            ? <OwnersMaintenancePage payments={(data.maintenance || []).filter((item) => recordMatchesFinancialYear(item, selectedFinancialYear))} owners={data.owners || []} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} onUpdateStatus={updateMaintenanceStatus} onEditPayment={openMaintenanceEditor} onDelete={deleteMaintenance} busy={busy} currentOwnerId={user.id} />
             : <MyMaintenancePage payments={myMaintenancePayments.filter((item) => String(item.ownerId) === String(user.id))} loading={myMaintenanceLoading} onEditPayment={openMaintenanceEditor} />)}
           {page === 'my-maintenance' && <MyMaintenancePage payments={myMaintenancePayments.filter((item) => String(item.ownerId) === String(user.id))} loading={myMaintenanceLoading} onEditPayment={openMaintenanceEditor} />}
-          {page === 'owners-maintenance' && role === 'admin' && <OwnersMaintenancePage payments={(data.maintenance || []).filter((item) => recordMatchesFinancialYear(item, selectedFinancialYear))} owners={data.owners || []} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} onUpdateStatus={updateMaintenanceStatus} onDelete={deleteMaintenance} busy={busy} currentOwnerId={user.id} />}
+          {page === 'owners-maintenance' && role === 'admin' && <OwnersMaintenancePage payments={(data.maintenance || []).filter((item) => recordMatchesFinancialYear(item, selectedFinancialYear))} owners={data.owners || []} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} onUpdateStatus={updateMaintenanceStatus} onEditPayment={openMaintenanceEditor} onDelete={deleteMaintenance} busy={busy} currentOwnerId={user.id} />}
 
           {page === 'quarterly' && role === 'admin' && <QuarterlyManagementPage owners={data.owners || []} financialYears={data.financialYears || []} selectedFinancialYear={selectedFinancialYear} setSelectedFinancialYear={setSelectedFinancialYear} onSave={saveFinancialYear} onGenerate={generateQuarterlyMaintenanceBulk} busy={busy} />}
           {page === 'owners' && <OwnersPage owners={filteredOwners} query={query} setQuery={setQuery} canManage={role === 'admin'} onNew={() => { setEditingOwner(null); setModal('owner'); }} onImport={() => importRef.current?.click()} onView={setSelectedOwner} onDelete={deleteOwner} />}
@@ -715,7 +752,7 @@ function TreasuryApp({ role, user, onSignOut }) {
       <input ref={importRef} className="visually-hidden" type="file" accept=".xlsx" onChange={importOwners} />
       {notice && <div className="toast" role="status"><CheckCircle2 size={17} />{notice}<button className="toast-close" aria-label="Dismiss" onClick={() => setNotice('')}><X size={15} /></button></div>}
       {modal && <Modal title={modal === 'expense' ? 'New expense request' : modal === 'maintenance' ? 'Generate quarterly maintenance' : editingOwner ? 'Edit owner details' : 'Add owner details'} onClose={() => { setModal(''); setEditingOwner(null); setSelectedMaintenancePhase(''); setSelectedMaintenanceOwnerId(''); }}>
-        {modal === 'expense' && <form className="record-form" onSubmit={submitExpense}><p className="form-intro">Create an expense request for Admin review.</p><div className="owner-summary"><div className="owner-summary-icon"><UsersRound size={18} /></div><div><strong>{data.owners.find((owner) => String(owner.id) === String(user.id))?.name || displayName}</strong><span>Requesting under your profile</span></div></div><div className="form-grid"><label>Expense Type<select name="expenseType" required defaultValue=""><option value="" disabled>Select an expense type</option>{EXPENSE_TYPES.map((type) => <option key={type}>{type}</option>)}</select></label><label>Amount ({CURRENCY})<input name="amount" type="number" min="0.01" step="0.01" placeholder="0" required /></label></div><div className="form-grid"><label>Financial Year<select name="financialYear" defaultValue={selectedFinancialYear}>{financialYearOptions().map((item) => <option key={item} value={item}>FY {item}</option>)}</select></label></div><label>Title<input name="title" maxLength="120" placeholder="Expense title" required /></label><label>Description<textarea name="description" rows="3" maxLength="1000" placeholder="Describe the expense" /></label><label>Comment<textarea name="comment" rows="2" maxLength="1000" placeholder="Additional details" /></label><label className="expense-attachment-field">Attachment (optional)<span><Paperclip size={15} /><input name="attachment" type="file" accept=".pdf,image/jpeg,image/png,image/webp" /><small>PDF or image, up to 10 MB</small></span></label><div className="form-footer"><span><ShieldCheck size={15} /> Saved to Expense Details</span><button className="button button-primary" disabled={busy}><Plus size={16} /> Submit request</button></div></form>}
+        {modal === 'expense' && <form className="record-form" onSubmit={submitExpense}><p className="form-intro">Create an expense request for Admin review.</p><div className="owner-summary"><div className="owner-summary-icon"><UsersRound size={18} /></div><div><strong>{data.owners.find((owner) => String(owner.id) === String(user.id))?.name || displayName}</strong><span>Requesting under your profile</span></div></div><div className="form-grid"><label>Expense Type<select name="expenseType" required defaultValue=""><option value="" disabled>Select an expense type</option>{EXPENSE_TYPES.map((type) => <option key={type}>{type}</option>)}</select></label><label>Amount ({CURRENCY})<input name="amount" type="number" min="0.01" step="0.01" placeholder="0" required /></label></div><div className="form-grid"><label>Financial Year<select name="financialYear" defaultValue={selectedFinancialYear}>{financialYearOptions().map((item) => <option key={item} value={item}>FY {item}</option>)}</select></label></div><label>Title<input name="title" maxLength="120" placeholder="Expense title" required /></label><label>Description<textarea name="description" rows="3" maxLength="1000" placeholder="Describe the expense" /></label><label>Comment<textarea name="comment" rows="2" maxLength="1000" placeholder="Additional details" /></label><label className="expense-attachment-field">Attachment (optional)<span><Paperclip size={15} /><input name="attachment" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" /><small>PDF, JPG, PNG, or WebP, up to 10 MB</small></span></label><div className="form-footer"><span><ShieldCheck size={15} /> Saved to Expense Details</span><button className="button button-primary" disabled={busy}><Plus size={16} /> Submit request</button></div></form>}
         {modal === 'maintenance' && <form className="record-form" onSubmit={generateQuarterlyMaintenance}><p className="form-intro">Create one pending record for the selected user.</p><label>Phase<select name="phase" value={selectedMaintenancePhase} onChange={(event) => { setSelectedMaintenancePhase(event.target.value); setSelectedMaintenanceOwnerId(''); }} required><option value="" disabled>Select a phase</option>{['Phase 1', 'Phase 2', 'Phase 3'].map((phase) => <option key={phase}>{phase}</option>)}</select></label><label>User<select name="ownerId" value={selectedMaintenanceOwnerId} onChange={(event) => setSelectedMaintenanceOwnerId(event.target.value)} disabled={!selectedMaintenancePhase} required><option value="" disabled>Select a user</option>{data.owners.filter((owner) => owner.phase === selectedMaintenancePhase).map((owner) => <option key={owner.id} value={owner.id}>{owner.name} · {owner.username}</option>)}</select></label><label>Plot number<input value={data.owners.find((owner) => owner.id === selectedMaintenanceOwnerId)?.plotNumber || ''} placeholder="Selected user's plot" readOnly /></label><div className="form-grid"><label>Financial Year<select name="financialYear" defaultValue={selectedFinancialYear}>{financialYearOptions().map((item) => <option key={item} value={item}>FY {item}</option>)}</select></label><label>Quarter<select name="quarter" defaultValue="Q1">{QUARTERS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Financial year<input name="financialYear" defaultValue={financialYear()} pattern="[0-9]{4}-[0-9]{2}" required /></label></div><div className="maintenance-total-note">Quarterly amount per house <strong>{money(QUARTERLY_MAINTENANCE_AMOUNT)}</strong></div><div className="form-footer"><span><ShieldCheck size={15} /> Existing user-quarter records are skipped</span><button className="button button-primary" disabled={busy || !selectedMaintenanceOwnerId}><Plus size={16} /> Generate record</button></div></form>}
         {modal === 'owner' && <form className="record-form" onSubmit={submitOwner}>
           <p className="form-intro">{editingOwner ? `Update ${editingOwner.name}'s Owner Details record.` : 'Owner IDs and creator details are assigned automatically.'}</p>
@@ -731,7 +768,7 @@ function TreasuryApp({ role, user, onSignOut }) {
           <div className="form-footer"><span><ShieldCheck size={15} /> Password is saved directly in the Excel database</span><button className="button button-primary" disabled={busy}><Plus size={16} /> {editingOwner ? 'Save changes' : 'Add owner'}</button></div>
         </form>}
       </Modal>}
-      {editingMaintenance && <Modal title="Submit maintenance payment" onClose={() => { setEditingMaintenance(null); setSelectedEvidence(null); }}>
+      {editingMaintenance && <Modal title={role === 'admin' ? 'Edit maintenance payment' : 'Submit maintenance payment'} onClose={() => { setEditingMaintenance(null); setSelectedEvidence(null); }}>
         <div className="maintenance-detail-panel">
           <div className="detail-grid">
             <span>Financial year</span><strong>{editingMaintenance.financialYear || 'Unassigned'}</strong>
@@ -744,7 +781,25 @@ function TreasuryApp({ role, user, onSignOut }) {
             <strong>Previous evidence</strong>
             <EvidencePreview filename={editingMaintenance.evidenceFile} name={editingMaintenance.evidenceName} />
           </div>}
-          {['owner', 'admin'].includes(role) && ['Pending', 'Rejected'].includes(editingMaintenance.status)
+          {role === 'admin' && editingMaintenance.status !== 'Paid'
+            ? <form className="record-form maintenance-submission-form" onSubmit={submitAdminMaintenanceDetails}>
+              <p className="form-intro">Update this payment record. Saving these details will mark the payment as Paid.</p>
+              <div className="form-grid">
+                <label>Payment date<input name="paymentDate" type="date" defaultValue={editingMaintenance.paymentDate || new Date().toISOString().slice(0, 10)} required /></label>
+                <label>Paid amount ({CURRENCY})<input name="paidAmount" type="number" min="0.01" step="0.01" max={Number(editingMaintenance.paymentAmount ?? editingMaintenance.amount)} defaultValue={Number(editingMaintenance.paidAmount || editingMaintenance.paymentAmount || editingMaintenance.amount)} required /></label>
+              </div>
+              <label>Payment method<select name="paymentMethod" defaultValue={editingMaintenance.paymentMethod || ''} required><option value="" disabled>Select method</option><option>UPI</option><option>Bank transfer</option><option>Cash</option><option>Other</option></select></label>
+              <label>Transaction reference<input name="reference" maxLength="120" defaultValue={editingMaintenance.reference || ''} placeholder="Optional reference number" /></label>
+              <label>Remarks<textarea name="remarks" rows="2" maxLength="500" defaultValue={editingMaintenance.remarks || ''} placeholder="Optional note" /></label>
+              <label>Payment evidence<input ref={evidenceInputRef} name="evidence" type="file" accept=".jpg,.jpeg,.png,.pdf,.webp,image/jpeg,image/png,application/pdf,image/webp" required={!editingMaintenance.evidenceFile} onChange={(event) => setSelectedEvidence(event.target.files?.[0] || null)} /></label>
+              {selectedEvidence && <EvidenceFilePreview file={selectedEvidence} onRemove={() => {
+                setSelectedEvidence(null);
+                if (evidenceInputRef.current) evidenceInputRef.current.value = '';
+              }} />}
+              <div className="evidence-hint">Attach JPG, PNG, or WebP up to 4 MB; PDF up to 10 MB. Paid amount must cover the full maintenance amount.</div>
+              <div className="form-footer"><span><ShieldCheck size={15} /> Saved to the maintenance record</span><button className="button button-primary" disabled={busy}><Check size={15} /> Save &amp; mark Paid</button></div>
+            </form>
+            : role === 'owner' && ['Pending', 'Rejected'].includes(editingMaintenance.status)
             ? <form className="record-form maintenance-submission-form" onSubmit={submitMaintenanceDetails}>
               <p className="form-intro">{editingMaintenance.status === 'Rejected' ? 'Update your payment details and attach evidence to resubmit.' : 'Enter your payment details and attach evidence for Admin review.'}</p>
               <div className="form-grid">
@@ -1084,7 +1139,7 @@ function IncomePage({ role, selectedFinancialYear, setSelectedFinancialYear }) {
     <div className="panel listing-panel"><div className="table-wrap"><table className="data-table"><thead><tr><th>INCOME</th><th>FINANCIAL YEAR</th><th>DATE</th><th>AMOUNT</th><th>REQUESTED BY</th><th>STATUS</th><th>APPROVED BY</th><th>ACTIONS</th></tr></thead>
       <tbody>{visible.map((item) => <tr key={item.id}><td><span className="activity-name"><strong>{item.title}</strong><small>{item.id}</small></span></td><td>{item.financialYear || 'Unassigned'}</td><td>{shortDate(item.incomeDate)}</td><td className="amount-cell">{money(item.amount)}</td><td>{item.requestedBy || '—'}</td><td>{item.evidenceFile ? <IncomeAttachmentLink filename={item.evidenceFile} originalName={item.evidenceName} /> : '—'}</td><td><StatusPill status={item.status} /></td><td>{item.approvedBy || '—'}</td><td>{role === 'admin' && item.status === 'Pending' ? <div className="row-actions"><button className="button button-quiet" type="button" disabled={busy} onClick={() => updateStatus(item, 'Approved')}>Approve</button><button className="button button-quiet button-danger" type="button" disabled={busy} onClick={() => updateStatus(item, 'Rejected')}>Reject</button></div> : item.status === 'Pending' ? <button className="icon-button row-menu" type="button" title="Edit pending income" aria-label="Edit pending income" onClick={() => setModalIncome(item)}><Pencil size={15} /></button> : null}</td></tr>)}</tbody>
     </table>{visible.length === 0 && <EmptyState text="No income records match these filters." />}</div></div>
-    {modalIncome && <Modal title={modalIncome.id ? 'Edit pending income' : 'Create income'} onClose={() => setModalIncome(null)}><form className="record-form" onSubmit={saveIncome}><label>Income title<input name="title" defaultValue={modalIncome.title || ''} maxLength="120" required /></label><label>Description<textarea name="description" rows="3" defaultValue={modalIncome.description || ''} /></label><div className="form-grid"><label>Income amount ({CURRENCY})<input name="amount" type="number" min="0.01" step="0.01" defaultValue={modalIncome.amount || ''} required /></label><label>Income date<input name="incomeDate" type="date" defaultValue={modalIncome.incomeDate || new Date().toISOString().slice(0, 10)} required /></label></div><label>Financial Year<select name="financialYear" defaultValue={modalIncome.financialYear || selectedFinancialYear}>{financialYearOptions().map((item) => <option key={item}>{item}</option>)}</select></label><label>Comments<textarea name="comments" rows="2" defaultValue={modalIncome.comments || ''} /></label><label className="expense-attachment-field">Income evidence (optional)<span><Paperclip size={15} /><input name="evidence" type="file" accept=".pdf,image/jpeg,image/png,image/webp" /><small>PDF or image, up to 10 MB</small></span></label>{modalIncome.evidenceFile && <div className="evidence-hint">Current evidence: <IncomeAttachmentLink filename={modalIncome.evidenceFile} originalName={modalIncome.evidenceName} /></div>}<div className="form-footer"><span>New records start Pending</span><button className="button button-primary" type="submit" disabled={busy}>{modalIncome.id ? 'Save changes' : 'Submit income'}</button></div></form></Modal>}
+    {modalIncome && <Modal title={modalIncome.id ? 'Edit pending income' : 'Create income'} onClose={() => setModalIncome(null)}><form className="record-form" onSubmit={saveIncome}><label>Income title<input name="title" defaultValue={modalIncome.title || ''} maxLength="120" required /></label><label>Description<textarea name="description" rows="3" defaultValue={modalIncome.description || ''} /></label><div className="form-grid"><label>Income amount ({CURRENCY})<input name="amount" type="number" min="0.01" step="0.01" defaultValue={modalIncome.amount || ''} required /></label><label>Income date<input name="incomeDate" type="date" defaultValue={modalIncome.incomeDate || new Date().toISOString().slice(0, 10)} required /></label></div><label>Financial Year<select name="financialYear" defaultValue={modalIncome.financialYear || selectedFinancialYear}>{financialYearOptions().map((item) => <option key={item}>{item}</option>)}</select></label><label>Comments<textarea name="comments" rows="2" defaultValue={modalIncome.comments || ''} /></label><label className="expense-attachment-field">Income evidence (optional)<span><Paperclip size={15} /><input name="evidence" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" /><small>PDF, JPG, PNG, or WebP, up to 10 MB</small></span></label>{modalIncome.evidenceFile && <div className="evidence-hint">Current evidence: <IncomeAttachmentLink filename={modalIncome.evidenceFile} originalName={modalIncome.evidenceName} /></div>}<div className="form-footer"><span>New records start Pending</span><button className="button button-primary" type="submit" disabled={busy}>{modalIncome.id ? 'Save changes' : 'Submit income'}</button></div></form></Modal>}
   </>;
 }
 
@@ -1162,7 +1217,7 @@ function QuarterlyManagementPage({ owners, financialYears, selectedFinancialYear
   }
 
   return <>
-    <PageHeading eyebrow="ADMIN CONFIGURATION" title="Quarterly Payment Management" description="Create financial years, configure quarterly charges, and generate owner payment records." />
+    <PageHeading eyebrow="ADMIN CONFIGURATION" title="Quarterly Payment Generation" description="Create financial years, configure quarterly charges, and generate owner payment records." />
     <section className="panel config-section config-section-primary">
       <h3 className="section-heading">Financial year configuration</h3>
       <div className="form-grid">
@@ -1267,12 +1322,23 @@ function MyMaintenancePage({ payments, loading, onEditPayment }) {
   </>;
 }
 
-function OwnersMaintenancePage({ payments, owners, selectedFinancialYear, setSelectedFinancialYear, onUpdateStatus, onDelete, busy, currentOwnerId }) {
+function OwnersMaintenancePage({ payments, owners, selectedFinancialYear, setSelectedFinancialYear, onUpdateStatus, onEditPayment, onDelete, busy, currentOwnerId }) {
   const [ownerFilter, setOwnerFilter] = useState('All owners');
   const [phaseFilter, setPhaseFilter] = useState('All phases');
   const [quarterFilter, setQuarterFilter] = useState('All quarters');
   const [statusFilter, setStatusFilter] = useState('All');
-  const ownerName = (ownerId) => owners.find((owner) => String(owner.id) === String(ownerId))?.name || payments.find((payment) => String(payment.ownerId) === String(ownerId))?.ownerName || '—';
+  const ownerFor = (ownerId) => owners.find((owner) => String(owner.id) === String(ownerId));
+  const ownerName = (ownerId) => ownerFor(ownerId)?.name || payments.find((payment) => String(payment.ownerId) === String(ownerId))?.ownerName || '—';
+  const whatsappLink = (payment) => {
+    const owner = ownerFor(payment.ownerId);
+    let phone = String(owner?.phone || owner?.mobileNumber || '').replace(/\D/g, '');
+    if (phone.length === 10) phone = `91${phone}`;
+    else if (phone.length === 11 && phone.startsWith('0')) phone = `91${phone.slice(1)}`;
+    if (!/^[1-9]\d{7,14}$/.test(phone)) return '';
+    const financialYear = payment.financialYear || String(payment.title || '').match(/FY ([0-9]{4}-[0-9]{2})/)?.[1] || 'Unassigned';
+    const message = `Hello ${ownerName(payment.ownerId)}, this is a message from SSN Treasury about your quarterly maintenance payment for FY ${financialYear}, ${payment.quarter}. Amount: ${money(payment.paymentAmount ?? payment.amount)}. Current status: ${payment.status}. Please reply if you need assistance.`;
+    return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+  };
   const visible = payments.filter((payment) =>
     (ownerFilter === 'All owners' || ownerName(payment.ownerId) === ownerFilter)
     && (phaseFilter === 'All phases' || String(payment.phaseNumber) === phaseFilter.replace('Phase ', ''))
@@ -1292,10 +1358,23 @@ function OwnersMaintenancePage({ payments, owners, selectedFinancialYear, setSel
       <select className="select-compact" aria-label="Filter by quarter" value={quarterFilter} onChange={(event) => setQuarterFilter(event.target.value)}>{['All quarters', ...QUARTERS].map((item) => <option key={item}>{item}</option>)}</select>
       <select className="select-compact" aria-label="Filter by payment status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>{['All', ...STATUSES].map((item) => <option key={item}>{item}</option>)}</select>
     </ListToolbar>
-    <div className="panel listing-panel"><div className="table-wrap"><table className="data-table"><thead><tr><th>OWNER</th><th>OWNER ID</th><th>PHASE</th><th>PLOT</th><th>FINANCIAL YEAR</th><th>QUARTER</th><th>MAINTENANCE</th><th>PAID</th><th>PAYMENT DETAILS</th><th>EVIDENCE</th><th>STATUS</th><th>ACTIONS</th></tr></thead>
+    <div className="panel listing-panel"><div className="table-wrap"><table className="data-table owners-maintenance-table"><thead><tr><th>ACTIONS</th><th>OWNER</th><th>OWNER ID</th><th>PHASE</th><th>PLOT</th><th>FINANCIAL YEAR</th><th>QUARTER</th><th>MAINTENANCE</th><th>PAID</th><th>PAYMENT DETAILS</th><th>EVIDENCE</th><th>STATUS</th></tr></thead>
       <tbody>{visible.map((payment) => {
         const isOwnPayment = String(payment.ownerId) === String(currentOwnerId);
+        const whatsappHref = whatsappLink(payment);
         return <tr key={payment.id}>
+        <td><div className="maintenance-admin-actions">
+          {payment.status !== 'Paid' && <button type="button" className="button button-quiet button-compact" title={isOwnPayment ? 'You cannot approve your own payment' : 'Edit payment details and evidence'} disabled={busy || isOwnPayment} onClick={() => onEditPayment(payment)}><Pencil size={14} /> Edit</button>}
+          {whatsappHref
+            ? <a className="button button-quiet button-compact whatsapp-button" href={whatsappHref} target="_blank" rel="noopener noreferrer" aria-label={`Open WhatsApp message to ${ownerName(payment.ownerId)}`}><MessageCircle size={14} /> WhatsApp</a>
+            : <button type="button" className="button button-quiet button-compact" title="No valid owner phone number is available" disabled><MessageCircle size={14} /> WhatsApp</button>}
+          {['Pending', 'Rejected', 'Approved'].includes(payment.status) && <button type="button" className="button button-primary button-compact" title={isOwnPayment ? 'You cannot mark your own payment as paid' : 'Mark maintenance as paid'} disabled={busy || isOwnPayment} onClick={() => onUpdateStatus(payment, 'Paid')}><Check size={14} /> Mark Paid</button>}
+          {payment.status === 'Pending Approval' && <>
+            <button type="button" className="button button-quiet button-compact" title={isOwnPayment ? 'You cannot approve your own payment' : 'Approve payment'} disabled={busy || !payment.evidenceFile || isOwnPayment} onClick={() => onUpdateStatus(payment, 'Paid')}><Check size={14} /> Approve</button>
+            <button type="button" className="button button-quiet button-compact button-reject" title={isOwnPayment ? 'You cannot reject your own payment' : 'Reject payment'} disabled={busy || isOwnPayment} onClick={() => onUpdateStatus(payment, 'Rejected')}><X size={14} /> Reject</button>
+          </>}
+          <button className="icon-button row-delete" type="button" title="Delete maintenance record" aria-label={`Delete ${ownerName(payment.ownerId)} ${payment.quarter}`} disabled={busy} onClick={() => onDelete(payment)}><Trash2 size={15} /></button>
+        </div></td>
         <td><strong>{ownerName(payment.ownerId)}</strong></td>
         <td className="mono-cell">{payment.ownerId}</td>
         <td>Phase {payment.phaseNumber}</td>
@@ -1307,13 +1386,6 @@ function OwnersMaintenancePage({ payments, owners, selectedFinancialYear, setSel
         <td><span className="contact-cell">{payment.paymentDate ? shortDate(payment.paymentDate) : '—'}<small>{[payment.paymentMethod, payment.reference].filter(Boolean).join(' · ') || 'No details submitted'}</small>{payment.remarks && <small>{payment.remarks}</small>}</span></td>
         <td>{payment.evidenceFile ? <EvidencePreview filename={payment.evidenceFile} name={payment.evidenceName} /> : '—'}</td>
         <td><StatusPill status={payment.status} /></td>
-        <td><div className="maintenance-admin-actions">
-          {payment.status === 'Pending Approval' && <>
-            <button type="button" className="button button-quiet button-compact" title={isOwnPayment ? 'You cannot approve your own payment' : 'Approve payment'} disabled={busy || !payment.evidenceFile || isOwnPayment} onClick={() => onUpdateStatus(payment, 'Paid')}><Check size={14} /> Approve</button>
-            <button type="button" className="button button-quiet button-compact button-reject" title={isOwnPayment ? 'You cannot reject your own payment' : 'Reject payment'} disabled={busy || isOwnPayment} onClick={() => onUpdateStatus(payment, 'Rejected')}><X size={14} /> Reject</button>
-          </>}
-          <button className="icon-button row-delete" type="button" title="Delete maintenance record" aria-label={`Delete ${ownerName(payment.ownerId)} ${payment.quarter}`} disabled={busy} onClick={() => onDelete(payment)}><Trash2 size={15} /></button>
-        </div></td>
       </tr>;
       })}</tbody>
     </table>{visible.length === 0 && <EmptyState text="No maintenance records match these filters." />}</div></div>
