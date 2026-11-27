@@ -9,6 +9,7 @@ import { verifyPassword } from './auth.js';
 import { ExcelTreasuryRepository, QUARTERLY_MAINTENANCE_AMOUNT, SHEETS } from './excelRepository.js';
 
 const admin = { id: 'admin-1', phone: '+15550000001', app_metadata: { role: 'admin' }, user_metadata: { full_name: 'Treasury Admin' } };
+const ownerHeadersWithoutPlotType = SHEETS.owners.headers.filter((header) => header !== 'PlotType');
 
 async function withRepository(run) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'ssn-treasury-'));
@@ -628,7 +629,7 @@ test('allows an Admin to submit only their own maintenance payment and prevents 
 test('adds the Username column to existing workbooks without losing Owner rows', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'ssn-treasury-legacy-'));
   const filePath = path.join(directory, 'treasury.xlsx');
-  const oldHeaders = SHEETS.owners.headers.slice(0, -1).filter((header) => !['User Name', 'Password'].includes(header));
+  const oldHeaders = ownerHeadersWithoutPlotType.slice(0, -1).filter((header) => !['User Name', 'Password'].includes(header));
   const legacyOwner = ['OWN-00007', 'Legacy Owner', '+15551000007', 'legacy@example.invalid', 'Phase 2', 'B-07', 'Old road', '', '', '2026-01-02', 'Admin'];
   try {
     await writeExcelFile([
@@ -651,7 +652,7 @@ test('adds the Username column to existing workbooks without losing Owner rows',
 test('renames the intermediate Username header to User Name and preserves its value', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'ssn-treasury-user-name-'));
   const filePath = path.join(directory, 'treasury.xlsx');
-  const previousHeaders = SHEETS.owners.headers.slice(0, -1).filter((header) => header !== 'Password').map((header) => header === 'User Name' ? 'Username' : header);
+  const previousHeaders = ownerHeadersWithoutPlotType.slice(0, -1).filter((header) => header !== 'Password').map((header) => header === 'User Name' ? 'Username' : header);
   const ownerRow = ['OWN-00008', 'legacy.login', 'Prior Username Owner', '+15551000008', 'prior@example.invalid', 'Phase 3', 'C-08', 'Old road', '', '', '2026-01-03', 'Admin'];
   try {
     await writeExcelFile([
@@ -672,7 +673,7 @@ test('renames the intermediate Username header to User Name and preserves its va
 test('adds the Role column to existing workbooks and defaults existing accounts to Member', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'ssn-treasury-role-migration-'));
   const filePath = path.join(directory, 'treasury.xlsx');
-  const previousHeaders = SHEETS.owners.headers.slice(0, -1).filter((header) => header !== 'Role');
+  const previousHeaders = ownerHeadersWithoutPlotType.slice(0, -1).filter((header) => header !== 'Role');
   const ownerRow = ['OWN-00009', 'legacy.member', '', 'Legacy Member', '+15551000009', 'member@example.invalid', 'Phase 1', 'A-09', 'Old road', '', '', '2026-01-04', 'Admin'];
   try {
     await writeExcelFile([
@@ -685,6 +686,48 @@ test('adds the Role column to existing workbooks and defaults existing accounts 
     const workbook = await readExcelFile(filePath);
     assert.deepEqual(workbook.find((sheet) => sheet.sheet === SHEETS.owners.name).data[0], SHEETS.owners.headers);
     assert.equal((await repository.read()).owners[0].role, 'Member');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('preserves the existing PlotType column during sign-in reads and owner updates', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'ssn-treasury-plot-type-'));
+  const filePath = path.join(directory, 'treasury.xlsx');
+  const ownerRow = [
+    'OWN-00011', 'plot.type.owner', 'Test-owner-password-1!', 'Plot Type Owner', '+15551000011',
+    'plot.type@example.invalid', 'Phase 1', 'A-11', 'Community Road', '', '', '2026-01-05',
+    'Treasury Admin', 'Member', '2026-01-01', 'Villa',
+  ];
+  try {
+    await writeExcelFile([
+      { sheet: SHEETS.owners.name, data: [SHEETS.owners.headers, ownerRow] },
+      { sheet: SHEETS.expenses.name, data: [SHEETS.expenses.headers] },
+      { sheet: SHEETS.maintenance.name, data: [SHEETS.maintenance.headers] },
+    ]).toFile(filePath);
+    const repository = new ExcelTreasuryRepository(filePath);
+    await repository.initialize();
+
+    const account = await repository.findAccountByMobileNumber('+15551000011');
+    assert.equal(account.plotType, 'Villa');
+    await repository.updateOwner(account.ownerId, {
+      username: account.username,
+      name: 'Updated Plot Type Owner',
+      mobileNumber: account.mobileNumber,
+      email: account.email,
+      phase: account.phase,
+      plotNumber: account.plotNumber,
+      address: account.address,
+      secondaryMobileNumber: '',
+      secondaryEmail: '',
+      moveInDate: account.moveInDate,
+    });
+
+    const updatedAccount = await repository.findAccountByMobileNumber('+15551000011');
+    assert.equal(updatedAccount.name, 'Updated Plot Type Owner');
+    assert.equal(updatedAccount.plotType, 'Villa');
+    const workbook = await readExcelFile(filePath);
+    assert.deepEqual(workbook.find((sheet) => sheet.sheet === SHEETS.owners.name).data[0], SHEETS.owners.headers);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

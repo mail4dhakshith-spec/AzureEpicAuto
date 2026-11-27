@@ -14,8 +14,8 @@ export const EXPENSE_TYPES = ['Phase 1 Park', 'Phase 2 Park', 'Road', 'Phase 3 P
 export const SHEETS = {
   owners: {
     name: 'Owner Details',
-    headers: ['Owner ID', 'User Name', 'Password', 'Name', 'Mobile Number', 'Email', 'Phase', 'Plot Number', 'Address', 'Secondary Mobile Number', 'Secondary Email', 'Created Date', 'Created By', 'Role', 'Move-In Date'],
-    fields: ['ownerId', 'username', 'password', 'name', 'mobileNumber', 'email', 'phase', 'plotNumber', 'address', 'secondaryMobileNumber', 'secondaryEmail', 'createdDate', 'createdBy', 'role', 'moveInDate'],
+    headers: ['Owner ID', 'User Name', 'Password', 'Name', 'Mobile Number', 'Email', 'Phase', 'Plot Number', 'Address', 'Secondary Mobile Number', 'Secondary Email', 'Created Date', 'Created By', 'Role', 'Move-In Date', 'PlotType'],
+    fields: ['ownerId', 'username', 'password', 'name', 'mobileNumber', 'email', 'phase', 'plotNumber', 'address', 'secondaryMobileNumber', 'secondaryEmail', 'createdDate', 'createdBy', 'role', 'moveInDate', 'plotType'],
   },
   expenses: {
     name: 'Expense Details',
@@ -114,13 +114,26 @@ function cellsToRecords(definition, rows) {
   const ownerSheet = definition.name === 'Owner Details';
   const maintenanceSheet = definition.name === 'Maintenance Payment Details';
   const expenseSheet = definition.name === 'Expense Details';
-  const ownerHeadersForLegacyVariant = ownerSheet ? definition.headers.slice(0, -1) : [];
-  const legacyHeaders = ownerSheet ? ownerHeadersForLegacyVariant.filter((header) => !['User Name', 'Password'].includes(header)) : [];
-  const headersWithoutPassword = ownerSheet ? ownerHeadersForLegacyVariant.filter((header) => header !== 'Password') : [];
-  const priorUsernameHeaders = headersWithoutPassword.map((header) => header === 'User Name' ? 'Username' : header);
-  const headersWithoutRole = ownerSheet ? ownerHeadersForLegacyVariant.filter((header) => header !== 'Role') : [];
-  const headersWithoutPasswordOrRole = ownerSheet ? ownerHeadersForLegacyVariant.filter((header) => !['Password', 'Role'].includes(header)) : [];
-  const priorUsernameHeadersWithoutRole = headersWithoutPasswordOrRole.map((header) => header === 'User Name' ? 'Username' : header);
+  const ownerHeaderBases = ownerSheet
+    ? [
+      definition.headers.filter((header) => header !== 'PlotType'),
+      definition.headers.filter((header) => !['PlotType', 'Move-In Date'].includes(header)),
+    ]
+    : [];
+  const ownerHeaderVariants = ownerHeaderBases.flatMap((headers) => {
+    const headersWithoutPassword = headers.filter((header) => header !== 'Password');
+    const headersWithoutRole = headers.filter((header) => header !== 'Role');
+    const headersWithoutPasswordOrRole = headers.filter((header) => !['Password', 'Role'].includes(header));
+    return [
+      headers,
+      headers.filter((header) => !['User Name', 'Password'].includes(header)),
+      headersWithoutPassword,
+      headersWithoutPassword.map((header) => header === 'User Name' ? 'Username' : header),
+      headersWithoutRole,
+      headersWithoutPasswordOrRole,
+      headersWithoutPasswordOrRole.map((header) => header === 'User Name' ? 'Username' : header),
+    ];
+  });
   const legacyMaintenanceHeaders = maintenanceSheet ? definition.headers.slice(0, 10) : [];
   const maintenanceHeadersWithoutPaymentDetails = maintenanceSheet ? definition.headers.slice(0, -2) : [];
   const maintenanceHeadersWithPaidAmount = maintenanceSheet ? definition.headers.slice(0, -1) : [];
@@ -131,7 +144,7 @@ function cellsToRecords(definition, rows) {
   const expenseHeadersWithEvidence = expenseSheet ? definition.headers.slice(0, -1) : [];
   const incomeSheet = definition.name === 'Income Details';
   const legacyIncomeHeaders = incomeSheet ? definition.headers.slice(0, 12) : [];
-  const headerVariants = ownerSheet ? [ownerHeadersForLegacyVariant, legacyHeaders, headersWithoutPassword, priorUsernameHeaders, headersWithoutRole, headersWithoutPasswordOrRole, priorUsernameHeadersWithoutRole] : maintenanceSheet ? [legacyMaintenanceHeaders, maintenanceHeadersWithoutFinancialYear, maintenanceHeadersWithoutPaymentDetails, maintenanceHeadersWithPaidAmount] : expenseSheet ? [legacyExpenseHeaders, expenseHeadersWithAttachments, expenseHeadersCurrent, expenseHeadersWithEvidence] : incomeSheet ? [legacyIncomeHeaders] : [];
+  const headerVariants = ownerSheet ? ownerHeaderVariants : maintenanceSheet ? [legacyMaintenanceHeaders, maintenanceHeadersWithoutFinancialYear, maintenanceHeadersWithoutPaymentDetails, maintenanceHeadersWithPaidAmount] : expenseSheet ? [legacyExpenseHeaders, expenseHeadersWithAttachments, expenseHeadersCurrent, expenseHeadersWithEvidence] : incomeSheet ? [legacyIncomeHeaders] : [];
   const matchingHeaders = headerVariants.find((headers) => headers.length === actualHeaders.length && headers.every((header, index) => actualHeaders[index] === header));
   const expectedHeaders = matchingHeaders || definition.headers;
   const fields = matchingHeaders ? expectedHeaders.map((header) => definition.headers.indexOf(header === 'Username' ? 'User Name' : header)).map((index) => definition.fields[index]) : definition.fields;
