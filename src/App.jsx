@@ -215,7 +215,7 @@ function App() {
     return <AuthScreen initialError={authError} onAuthenticated={(nextSession) => { localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextSession)); setAuthError(''); setSession(nextSession); }} />;
   }
   return <TreasuryApp role={role} user={session.user} onSignOut={(message = '') => {
-    if (message) setAuthError(message);
+    if (typeof message === 'string' && message) setAuthError(message);
     localStorage.removeItem(AUTH_STORAGE_KEY);
     setSession(null);
   }} />;
@@ -684,7 +684,7 @@ function TreasuryApp({ role, user, onSignOut }) {
         <div className="sidebar-bottom">
           <div className="fy-side-card"><div className="fy-side-top"><span>FINANCIAL YEAR</span><span className="live-dot" /></div><strong>FY {selectedFinancialYear}</strong><div className="fy-progress"><span /></div><div className="fy-side-foot"><span>Apr 01, {selectedFinancialYear.slice(0, 4)}</span><span>Mar 31, {Number(selectedFinancialYear.slice(0, 4)) + 1}</span></div></div>
           <button className="nav-item settings-link" onClick={() => notify(driveMode ? 'Google Sheets workbook connected' : 'Excel workbook connected') }><Settings2 size={18} strokeWidth={1.8} /><span>Workbook</span></button>
-          <div className="profile-row"><div className="profile-avatar">{initials}</div><div className="profile-text"><strong>{displayName}</strong><span>{role === 'admin' ? 'Administrator' : 'Owner account'}</span></div><button className="icon-button sign-out-button" aria-label="Sign out" title="Sign out" onClick={onSignOut}><LogOut size={17} /></button></div>
+          <div className="profile-row"><div className="profile-avatar">{initials}</div><div className="profile-text"><strong>{displayName}</strong><span>{role === 'admin' ? 'Administrator' : 'Owner account'}</span></div><button className="icon-button sign-out-button" aria-label="Sign out" title="Sign out" onClick={() => onSignOut()}><LogOut size={17} /></button></div>
         </div>
       </aside>
       {mobileNav && <button className="mobile-scrim" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}
@@ -692,7 +692,7 @@ function TreasuryApp({ role, user, onSignOut }) {
       <main className="main-area">
         <header className="topbar">
           <div className="topbar-left"><button className="icon-button menu-button" aria-label="Open navigation" onClick={() => setMobileNav(true)}><Menu size={19} /></button><div className="breadcrumb">Treasury <ChevronRight size={14} /> <span>{currentTitle}</span></div></div>
-          <div className="topbar-right"><div className="connection-state"><span className={`connection-dot ${demoMode ? 'demo-dot' : ''}`} />{demoMode ? 'Demo workspace' : 'Google Sheets connected'}</div>{role === 'admin' && <button className="icon-button notification-button" aria-label="Open expense requests" onClick={() => setPage('expenses')}><Bell size={18} />{pendingCount > 0 && <i />}</button>}<div className="topbar-avatar">{initials}</div><button className="icon-button topbar-signout" aria-label="Sign out" title="Sign out" onClick={onSignOut}><LogOut size={17} /></button></div>
+          <div className="topbar-right"><div className="connection-state"><span className={`connection-dot ${demoMode ? 'demo-dot' : ''}`} />{demoMode ? 'Demo workspace' : 'Google Sheets connected'}</div>{role === 'admin' && <button className="icon-button notification-button" aria-label="Open expense requests" onClick={() => setPage('expenses')}><Bell size={18} />{pendingCount > 0 && <i />}</button>}<div className="topbar-avatar">{initials}</div><button className="icon-button topbar-signout" aria-label="Sign out" title="Sign out" onClick={() => onSignOut()}><LogOut size={17} /></button></div>
         </header>
 
         <div className="page-content">
