@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import AuthScreen from './auth/AuthScreen.jsx';
 import { getApiUrl } from './apiUrl.js';
+import { buildMaintenanceWhatsAppMessage } from './maintenanceWhatsAppMessage.js';
 
 const API_URL = getApiUrl(window.location.hostname, import.meta.env.VITE_API_URL);
 const AUTH_STORAGE_KEY = 'ssn-treasury-session-v1';
@@ -1336,7 +1337,13 @@ function OwnersMaintenancePage({ payments, owners, selectedFinancialYear, setSel
     else if (phone.length === 11 && phone.startsWith('0')) phone = `91${phone.slice(1)}`;
     if (!/^[1-9]\d{7,14}$/.test(phone)) return '';
     const financialYear = payment.financialYear || String(payment.title || '').match(/FY ([0-9]{4}-[0-9]{2})/)?.[1] || 'Unassigned';
-    const message = `Hello ${ownerName(payment.ownerId)}, this is a message from SSN Treasury about your quarterly maintenance payment for FY ${financialYear}, ${payment.quarter}. Amount: ${money(payment.paymentAmount ?? payment.amount)}. Current status: ${payment.status}. Please reply if you need assistance.`;
+    const message = buildMaintenanceWhatsAppMessage({
+      ownerName: ownerName(payment.ownerId),
+      financialYear,
+      quarter: payment.quarter,
+      amount: money(payment.paymentAmount ?? payment.amount),
+      status: payment.status,
+    });
     return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
   };
   const visible = payments.filter((payment) =>
